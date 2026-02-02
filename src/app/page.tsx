@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Button } from "@/components/ui/button"; // Using your shadcn button
+import { Button } from "@/components/ui/button"; // Using your shadcn buttonm
 import { ArrowRight, ShieldCheck, Activity, MapPin } from "lucide-react";
 
 export default function Home() {
