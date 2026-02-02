@@ -1,5 +1,13 @@
 import Link from "next/link";
+<<<<<<< HEAD
 import { Button } from "@/components/ui/button";// Using your shadcn button
+=======
+<<<<<<< HEAD
+import { Button } from "@/components/ui/button"; [cite_start]// Using your shadcn button [cite: 17]
+=======
+import { Button } from "@/components/ui/button";// Using your shadcn button
+>>>>>>> ac113e7 (Fix landing page, update .gitignore, add firebase-admin dependency)
+>>>>>>> 929fedc (Save my work before rebasing)
 import { ArrowRight, ShieldCheck, Activity, MapPin } from "lucide-react";
 
 export default function Home() {
