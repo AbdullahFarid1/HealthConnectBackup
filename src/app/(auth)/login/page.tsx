@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { HeartPulse, Phone } from "lucide-react";
+import { ArrowRight, HeartPulse } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +22,7 @@ export default function LoginPage() {
           <div>
             <CardTitle className="text-base">Welcome back</CardTitle>
             <CardDescription>
-              Log in to your HealthConnect account.
+              Sign in with phone (SMS) or email and password.
             </CardDescription>
           </div>
         </div>
@@ -30,8 +30,8 @@ export default function LoginPage() {
       <CardContent className="space-y-3 pt-5">
         <Link href="/auth/login">
           <Button className="h-12 w-full rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
-            <Phone className="mr-2 h-4 w-4" />
-            Continue with Phone Number
+            Continue
+            <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </Link>
         <Link href="/register">

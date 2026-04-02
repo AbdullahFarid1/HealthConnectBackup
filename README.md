@@ -18,7 +18,7 @@ Create a trusted, localized healthcare ecosystem where:
 | Language | TypeScript 5 |
 | UI | Tailwind CSS 4 + shadcn/ui (project-local) |
 | Icons | Lucide React |
-| Auth | Firebase Auth (Phone OTP) |
+| Auth | Firebase Auth (Phone OTP + Email/Password + verification email) |
 | Backend | Firebase Admin SDK |
 | Theme | next-themes (light/dark/system) |
 
@@ -55,9 +55,9 @@ Create a trusted, localized healthcare ecosystem where:
 #### Auth (centered card layout via layout)
 | Route | Description |
 |-------|-------------|
-| `/login` | Login entry — links to phone OTP |
-| `/auth/login` | Phone OTP login with RecaptchaVerifier (Firebase v9+ fixed), loading states, error handling |
-| `/register` | Registration with account type selector (Patient vs Doctor), role-specific fields (PMDC no., specialty for doctors; city for patients) |
+| `/login` | Login entry — links to combined sign-in |
+| `/auth/login` | **Phone** (SMS + invisible reCAPTCHA) or **Email** (password). Session cookie via `/api/auth/session`. Optional *Resend verification email*. |
+| `/register` | Patient vs Doctor, then **Phone** (continue to SMS on `/auth/login`) or **Email** (create account + `sendEmailVerification` + session). Requires **Email/Password** enabled in Firebase Console. |
 
 #### App Portal
 | Route | Description |
@@ -189,6 +189,8 @@ cp .env.local.example .env.local
 Required variables:
 - `NEXT_PUBLIC_FIREBASE_*` — Firebase client config (6 vars)
 - `FIREBASE_ADMIN_*` — Firebase Admin SDK (3 vars)
+
+**Firebase Authentication → Sign-in method:** enable **Phone** (for SMS) and **Email/Password** (for email accounts and verification links). Authorized domains must include your dev host (e.g. `localhost`).
 
 ### Run
 
