@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase/client";
 import { onAuthStateChanged } from "firebase/auth";
 import { Shield, Stethoscope, User, Users } from "lucide-react";
 
-import { DashboardLayout, type DashboardNavItem } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Role = "patient" | "doctor" | "dentist" | "reception" | "admin";
 
@@ -29,19 +29,7 @@ function normalizeRole(raw: unknown): Role | null {
 
 export default function AppPortal() {
   const router = useRouter();
-  const [status, setStatus] = useState<"checking" | "no-user" | "needs-role">(
-    "checking"
-  );
-
-  const nav = useMemo<DashboardNavItem[]>(
-    () => [
-      { href: "/o/patient", label: "Patient", icon: User },
-      { href: "/o/dentist", label: "Doctor", icon: Stethoscope },
-      { href: "/o/reception", label: "Reception", icon: Users },
-      { href: "/o/admin", label: "Admin", icon: Shield },
-    ],
-    []
-  );
+  const [status, setStatus] = useState<"checking" | "no-user" | "needs-role">("checking");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -49,7 +37,6 @@ export default function AppPortal() {
         setStatus("no-user");
         return;
       }
-
       try {
         const token = await user.getIdTokenResult();
         const role =
@@ -66,101 +53,94 @@ export default function AppPortal() {
         setStatus("needs-role");
       }
     });
-
     return () => unsub();
   }, [router]);
 
-  if (status === "no-user") {
+  if (status === "checking") {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-12 text-slate-900">
-        <div className="mx-auto max-w-md">
-          <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-xl shadow-slate-200">
-            <CardContent className="p-6">
-              <p className="text-sm font-semibold">You’re not logged in.</p>
-              <p className="mt-2 text-sm text-slate-600">
-                Please login to continue to your dashboard.
-              </p>
-              <div className="mt-5 flex gap-3">
-                <Link href="/login" className="flex-1">
-                  <Button className="h-11 w-full rounded-xl bg-blue-600 hover:bg-blue-700">
-                    Login
-                  </Button>
-                </Link>
-                <Link href="/" className="flex-1">
-                  <Button variant="outline" className="h-11 w-full rounded-xl">
-                    Home
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-md space-y-4">
+          <Skeleton className="h-6 w-40 rounded-lg" />
+          <Skeleton className="h-4 w-64 rounded-lg" />
+          <Skeleton className="h-40 rounded-2xl" />
         </div>
       </div>
     );
   }
 
+  if (status === "no-user") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md overflow-hidden">
+          <div className="h-1.5 bg-gradient-to-r from-blue-600 to-teal-500" />
+          <CardContent className="p-6">
+            <p className="text-sm font-semibold text-foreground">
+              You&apos;re not logged in.
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Please login to continue to your dashboard.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <Link href="/login" className="flex-1">
+                <Button className="h-11 w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700">
+                  Login
+                </Button>
+              </Link>
+              <Link href="/" className="flex-1">
+                <Button variant="outline" className="h-11 w-full rounded-xl">
+                  Home
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
-    <DashboardLayout
-      title="App"
-      roleLabel={
-        status === "checking"
-          ? "Checking your session…"
-          : "Select a dashboard"
-      }
-      nav={nav}
-    >
-      <div className="space-y-6">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-900">
-            Continue to your workspace
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full max-w-lg">
+        <div className="mb-6">
+          <h2 className="text-lg font-bold text-foreground">
+            Choose your dashboard
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            If your role is configured, you’ll be redirected automatically.
+          <p className="mt-1 text-sm text-muted-foreground">
+            If your role is configured, you&apos;ll be redirected automatically.
           </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <RoleCard
-            href="/o/patient"
-            title="Patient dashboard"
-            desc="Book appointments and view records."
-          />
-          <RoleCard
-            href="/o/dentist"
-            title="Doctor dashboard"
-            desc="Manage appointments and patients."
-          />
-          <RoleCard
-            href="/o/reception"
-            title="Reception dashboard"
-            desc="Coordinate check-ins and schedules."
-          />
-          <RoleCard
-            href="/o/admin"
-            title="Admin dashboard"
-            desc="Manage users and system settings."
-          />
+          <RoleCard href="/o/patient" icon={User} title="Patient" desc="Book appointments and view records." />
+          <RoleCard href="/o/dentist" icon={Stethoscope} title="Doctor" desc="Manage appointments and patients." />
+          <RoleCard href="/o/reception" icon={Users} title="Reception" desc="Coordinate check-ins and schedules." />
+          <RoleCard href="/o/admin" icon={Shield} title="Admin" desc="Manage users and platform settings." />
         </div>
       </div>
-    </DashboardLayout>
+    </div>
   );
 }
 
 function RoleCard({
   href,
+  icon: Icon,
   title,
   desc,
 }: {
   href: string;
+  icon: typeof User;
   title: string;
   desc: string;
 }) {
   return (
-    <Link href={href} className="block">
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+    <Link href={href}>
+      <Card className="group h-full transition-all hover:-translate-y-0.5 hover:shadow-md">
         <CardContent className="p-5">
-          <p className="text-sm font-semibold text-slate-900">{title}</p>
-          <p className="mt-1 text-sm text-slate-600">{desc}</p>
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 transition-colors group-hover:bg-primary/15">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <p className="text-sm font-semibold text-foreground">{title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{desc}</p>
         </CardContent>
       </Card>
     </Link>

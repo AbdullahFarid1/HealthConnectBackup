@@ -1,37 +1,22 @@
-import {
-  BarChart3,
-  ClipboardList,
-  FileText,
-  Stethoscope,
-  UserCircle,
-} from "lucide-react";
-
-import {
-  DashboardLayout,
-  type DashboardNavItem,
-} from "@/components/layout/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { FileText } from "lucide-react";
 
-export default function DentistReportsPage() {
-  const nav: DashboardNavItem[] = [
-    { href: "/o/dentist", label: "Overview", icon: BarChart3 },
-    { href: "/o/dentist/patients", label: "My Patients", icon: Stethoscope },
-    { href: "/o/dentist/appointments", label: "Appointments", icon: ClipboardList },
-    { href: "/o/dentist/reports", label: "Reports", icon: FileText },
-    { href: "/o/dentist/profile", label: "Profile", icon: UserCircle },
-  ];
-
+export default function DoctorReports() {
   return (
-    <DashboardLayout title="Reports" roleLabel="Doctor dashboard" nav={nav}>
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm">
-        <CardContent className="p-5">
-          <p className="text-sm font-semibold text-slate-900">Reports</p>
-          <p className="mt-1 text-sm text-slate-600">
-            Generate and review clinical reports here.
-          </p>
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Reports</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Generate and review clinical reports.</p>
+      </div>
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center p-10 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+            <FileText className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="mt-4 text-sm font-semibold text-foreground">No reports yet</p>
+          <p className="mt-1 max-w-xs text-sm text-muted-foreground">Clinical reports will appear here after completing appointments.</p>
         </CardContent>
       </Card>
-    </DashboardLayout>
+    </>
   );
 }
-

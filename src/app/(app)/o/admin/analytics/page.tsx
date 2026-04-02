@@ -1,37 +1,22 @@
-import {
-  BarChart3,
-  CalendarCheck2,
-  Settings,
-  Shield,
-  Users,
-} from "lucide-react";
-
-import {
-  DashboardLayout,
-  type DashboardNavItem,
-} from "@/components/layout/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { BarChart3 } from "lucide-react";
 
-export default function AdminAnalyticsPage() {
-  const nav: DashboardNavItem[] = [
-    { href: "/o/admin", label: "Overview", icon: BarChart3 },
-    { href: "/o/admin/users", label: "Manage Users", icon: Users },
-    { href: "/o/admin/appointments", label: "Appointments", icon: CalendarCheck2 },
-    { href: "/o/admin/analytics", label: "System Analytics", icon: Shield },
-    { href: "/o/admin/settings", label: "Settings", icon: Settings },
-  ];
-
+export default function AdminAnalytics() {
   return (
-    <DashboardLayout title="System Analytics" roleLabel="Admin dashboard" nav={nav}>
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm">
-        <CardContent className="p-5">
-          <p className="text-sm font-semibold text-slate-900">Analytics</p>
-          <p className="mt-1 text-sm text-slate-600">
-            Track usage, appointment volume, and system health (UI-only).
-          </p>
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Analytics</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Track usage, appointment volume, and platform health.</p>
+      </div>
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center p-10 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+            <BarChart3 className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="mt-4 text-sm font-semibold text-foreground">Analytics Dashboard</p>
+          <p className="mt-1 max-w-xs text-sm text-muted-foreground">Charts and metrics will appear here once connected to backend data.</p>
         </CardContent>
       </Card>
-    </DashboardLayout>
+    </>
   );
 }
-

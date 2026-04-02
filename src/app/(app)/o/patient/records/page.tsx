@@ -1,37 +1,22 @@
-import {
-  BarChart3,
-  CalendarCheck2,
-  ClipboardList,
-  FileText,
-  UserCircle,
-} from "lucide-react";
-
-import {
-  DashboardLayout,
-  type DashboardNavItem,
-} from "@/components/layout/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { FileText } from "lucide-react";
 
-export default function PatientRecordsPage() {
-  const nav: DashboardNavItem[] = [
-    { href: "/o/patient", label: "Overview", icon: BarChart3 },
-    { href: "/o/patient/book", label: "Book Appointment", icon: CalendarCheck2 },
-    { href: "/o/patient/appointments", label: "My Appointments", icon: ClipboardList },
-    { href: "/o/patient/records", label: "Medical Records", icon: FileText },
-    { href: "/o/patient/profile", label: "Profile", icon: UserCircle },
-  ];
-
+export default function PatientRecords() {
   return (
-    <DashboardLayout title="Medical Records" roleLabel="Patient dashboard" nav={nav}>
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm">
-        <CardContent className="p-5">
-          <p className="text-sm font-semibold text-slate-900">Records</p>
-          <p className="mt-1 text-sm text-slate-600">
-            View prescriptions, summaries, and uploaded documents here.
-          </p>
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Medical Records</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Access your prescriptions, diagnoses, and visit history.</p>
+      </div>
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center p-10 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+            <FileText className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="mt-4 text-sm font-semibold text-foreground">No records yet</p>
+          <p className="mt-1 max-w-xs text-sm text-muted-foreground">Your medical records will appear here after your first appointment.</p>
         </CardContent>
       </Card>
-    </DashboardLayout>
+    </>
   );
 }
-

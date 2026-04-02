@@ -1,37 +1,31 @@
-import {
-  BarChart3,
-  CalendarCheck2,
-  ClipboardList,
-  FileText,
-  UserCircle,
-} from "lucide-react";
-
-import {
-  DashboardLayout,
-  type DashboardNavItem,
-} from "@/components/layout/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
-export default function PatientProfilePage() {
-  const nav: DashboardNavItem[] = [
-    { href: "/o/patient", label: "Overview", icon: BarChart3 },
-    { href: "/o/patient/book", label: "Book Appointment", icon: CalendarCheck2 },
-    { href: "/o/patient/appointments", label: "My Appointments", icon: ClipboardList },
-    { href: "/o/patient/records", label: "Medical Records", icon: FileText },
-    { href: "/o/patient/profile", label: "Profile", icon: UserCircle },
-  ];
-
+export default function PatientProfile() {
   return (
-    <DashboardLayout title="Profile" roleLabel="Patient dashboard" nav={nav}>
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm">
-        <CardContent className="p-5">
-          <p className="text-sm font-semibold text-slate-900">Profile</p>
-          <p className="mt-1 text-sm text-slate-600">
-            Profile details and preferences will appear here.
-          </p>
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Profile</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Manage your personal details.</p>
+      </div>
+      <Card>
+        <CardContent className="space-y-4 p-5">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-foreground">Full name</label>
+            <Input placeholder="Your name" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-foreground">Phone number</label>
+            <Input placeholder="+923001234567" disabled />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-foreground">City</label>
+            <Input placeholder="e.g. Lahore" />
+          </div>
+          <Button className="rounded-xl bg-blue-600 text-white hover:bg-blue-700">Save Changes</Button>
         </CardContent>
       </Card>
-    </DashboardLayout>
+    </>
   );
 }
-

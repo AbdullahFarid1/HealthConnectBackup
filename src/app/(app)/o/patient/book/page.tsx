@@ -1,50 +1,40 @@
-import {
-  BarChart3,
-  CalendarCheck2,
-  ClipboardList,
-  FileText,
-  Search,
-  UserCircle,
-} from "lucide-react";
-
-import { DashboardLayout, type DashboardNavItem } from "@/components/layout/DashboardLayout";
+import { Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
-export default function PatientBookPage() {
-  const nav: DashboardNavItem[] = [
-    { href: "/o/patient", label: "Overview", icon: BarChart3 },
-    { href: "/o/patient/book", label: "Book Appointment", icon: CalendarCheck2 },
-    { href: "/o/patient/appointments", label: "My Appointments", icon: ClipboardList },
-    { href: "/o/patient/records", label: "Medical Records", icon: FileText },
-    { href: "/o/patient/profile", label: "Profile", icon: UserCircle },
-  ];
-
+export default function PatientBook() {
   return (
-    <DashboardLayout title="Book Appointment" roleLabel="Patient dashboard" nav={nav}>
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm">
-        <CardContent className="p-5">
-          <div className="flex items-center gap-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50">
-              <Search className="h-5 w-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Search</p>
-              <p className="mt-1 text-sm text-slate-600">
-                Find a clinic or specialist to book an appointment.
-              </p>
-            </div>
-          </div>
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-foreground">
+          Book an Appointment
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Search for a doctor by name, specialty, or city.
+        </p>
+      </div>
 
-          <div className="mt-5 space-y-2">
-            <label className="text-xs font-semibold text-slate-700">
-              Search by specialty or clinic
-            </label>
-            <Input placeholder="e.g. cardiology, dermatology, clinic name…" />
+      <Card>
+        <CardContent className="p-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+              <Search className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <Input placeholder="Search doctors, specialties, clinics…" />
+            </div>
           </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {["Cardiologist", "Dermatologist", "Dentist", "Orthopedic", "ENT"].map((tag) => (
+              <Button key={tag} variant="outline" size="sm" className="rounded-full text-xs">{tag}</Button>
+            ))}
+          </div>
+          <p className="mt-6 text-center text-xs text-muted-foreground">
+            Search results will appear here once connected to backend.
+          </p>
         </CardContent>
       </Card>
-    </DashboardLayout>
+    </>
   );
 }
-

@@ -1,37 +1,35 @@
-import {
-  BarChart3,
-  CalendarCheck2,
-  MessageSquare,
-  Timer,
-  UserCircle,
-} from "lucide-react";
-
-import {
-  DashboardLayout,
-  type DashboardNavItem,
-} from "@/components/layout/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
-export default function ReceptionAppointmentsPage() {
-  const nav: DashboardNavItem[] = [
-    { href: "/o/reception", label: "Overview", icon: BarChart3 },
-    { href: "/o/reception/queue", label: "Queue", icon: Timer },
-    { href: "/o/reception/appointments", label: "Today’s Appointments", icon: CalendarCheck2 },
-    { href: "/o/reception/messages", label: "Messages", icon: MessageSquare },
-    { href: "/o/reception/profile", label: "Profile", icon: UserCircle },
-  ];
-
+export default function ReceptionAppointments() {
   return (
-    <DashboardLayout title="Today’s Appointments" roleLabel="Reception dashboard" nav={nav}>
-      <Card className="rounded-2xl border-slate-200/70 bg-white/80 shadow-sm">
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Today&apos;s Appointments</h2>
+        <p className="mt-1 text-sm text-muted-foreground">View today&apos;s schedule and handle check-ins.</p>
+      </div>
+      <Card>
         <CardContent className="p-5">
-          <p className="text-sm font-semibold text-slate-900">Appointments</p>
-          <p className="mt-1 text-sm text-slate-600">
-            View today’s schedule and handle check-ins.
-          </p>
+          <div className="space-y-3">
+            <Row patient="Fatima Noor" doctor="Dr. Aisha Khan" time="10:00 AM" status="checked-in" />
+            <Row patient="Ahmed Raza" doctor="Dr. Bilal Ahmed" time="11:00 AM" status="scheduled" />
+            <Row patient="Usman Ali" doctor="Dr. Sara Malik" time="2:00 PM" status="scheduled" />
+          </div>
+          <p className="mt-4 text-center text-xs text-muted-foreground">Connect to backend to display real data.</p>
         </CardContent>
       </Card>
-    </DashboardLayout>
+    </>
   );
 }
 
+function Row({ patient, doctor, time, status }: { patient: string; doctor: string; time: string; status: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 px-4 py-3">
+      <div>
+        <p className="text-sm font-semibold text-foreground">{patient}</p>
+        <p className="text-xs text-muted-foreground">{doctor} · {time}</p>
+      </div>
+      <Badge variant={status === "checked-in" ? "success" : "secondary"} className="capitalize">{status}</Badge>
+    </div>
+  );
+}
