@@ -1,0 +1,831 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import {
+  Building2,
+  Calendar,
+  Clock,
+  Loader2,
+  Plus,
+  Trash2,
+  Pencil,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
+
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import type {
+  UserProfileDoc,
+  ClinicDoc,
+  AvailabilityDoc,
+  SlotDuration,
+} from "@/types";
+
+// ─── Constants ───────────────────────────────────────────────
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const SLOT_DURATIONS: SlotDuration[] = [15, 30, 45, 60];
+
+// ─── Helper ──────────────────────────────────────────────────
+function formatTime(t: string) {
+  const [h, m] = t.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+// ─── Main Component ──────────────────────────────────────────
+export default function DoctorProfile() {
+  // Profile fields
+  const [name, setName] = useState("");
+  const [pmdc, setPmdc] = useState("");
+  const [specialty, setSpecialty] = useState("");
+  const [fee, setFee] = useState("");
+  const [city, setCity] = useState("");
+  const [bio, setBio] = useState("");
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  // Clinics
+  const [clinics, setClinics] = useState<ClinicDoc[]>([]);
+  const [clinicForm, setClinicForm] = useState({
+    name: "",
+    address: "",
+    city: "",
+    phone: "",
+    latitude: "",
+    longitude: "",
+    mapUrl: "",
+  });
+  const [editingClinicId, setEditingClinicId] = useState<string | null>(null);
+  const [clinicLoading, setClinicLoading] = useState(false);
+
+  // Availability
+  const [availability, setAvailability] = useState<AvailabilityDoc[]>([]);
+  const [avForm, setAvForm] = useState({
+    clinicId: "",
+    selectedDays: [] as number[],
+    startTime: "09:00",
+    endTime: "17:00",
+    slotDuration: 30 as SlotDuration,
+    repeatWeekly: false,
+    specificDate: "",
+  });
+  const [avLoading, setAvLoading] = useState(false);
+  const [avError, setAvError] = useState("");
+
+  // Receptionists
+  const [receptionists, setReceptionists] = useState<UserProfileDoc[]>([]);
+  const [recForm, setRecForm] = useState({ name: "", email: "", phone: "", assignedClinicIds: [] as string[] });
+  const [recLoading, setRecLoading] = useState(false);
+  const [recTempPassword, setRecTempPassword] = useState("");
+
+  // ─── Load all data ─────────────────────────────────────────
+  const loadClinics = useCallback(async () => {
+    try {
+      const res = await fetch("/api/clinics");
+      if (res.ok) setClinics(await res.json());
+    } catch { /* empty */ }
+  }, []);
+
+  const loadAvailability = useCallback(async () => {
+    // Load availability for all clinics
+    const allAv: AvailabilityDoc[] = [];
+    for (const c of clinics) {
+      try {
+        const res = await fetch(`/api/availability?clinicId=${c.id}`);
+        if (res.ok) {
+          const items = await res.json();
+          allAv.push(...items);
+        }
+      } catch { /* empty */ }
+    }
+    setAvailability(allAv);
+  }, [clinics]);
+
+  const loadReceptionists = useCallback(async () => {
+    try {
+      const res = await fetch("/api/receptionists");
+      if (res.ok) setReceptionists(await res.json());
+    } catch { /* empty */ }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/users/me");
+        if (res.ok) {
+          const data = await res.json();
+          setName(data.name ?? "");
+          setPmdc(data.pmdcRegistrationNo ?? "");
+          setSpecialty(data.specialty ?? "");
+          setFee(data.consultationFee?.toString() ?? "");
+          setCity(data.city ?? "");
+          setBio(data.bio ?? "");
+          setPhotoUrl(data.photoUrl ?? "");
+        }
+      } catch { /* empty */ }
+      await loadClinics();
+      await loadReceptionists();
+      setLoading(false);
+    })();
+  }, [loadClinics, loadReceptionists]);
+
+  // Load availability when clinics change
+  useEffect(() => {
+    if (clinics.length > 0) loadAvailability();
+  }, [clinics, loadAvailability]);
+
+  // Auto-set first clinic in availability form
+  useEffect(() => {
+    if (clinics.length > 0 && !avForm.clinicId) {
+      setAvForm((f) => ({ ...f, clinicId: clinics[0].id }));
+    }
+  }, [clinics, avForm.clinicId]);
+
+  // ─── Profile Save ──────────────────────────────────────────
+  const handleSaveProfile = async () => {
+    setSaving(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/users/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          name,
+          specialty,
+          consultationFee: fee ? Number(fee) : undefined,
+          city,
+          bio,
+          photoUrl,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      setMessage(res.ok ? "Profile updated!" : "Failed to save.");
+    } catch {
+      setMessage("Network error.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ─── Clinic CRUD ───────────────────────────────────────────
+  const handleSaveClinic = async () => {
+    if (!clinicForm.name || !clinicForm.address || !clinicForm.city) return;
+    setClinicLoading(true);
+    try {
+      if (editingClinicId) {
+        await fetch("/api/clinics", {
+          method: "PUT",
+          body: JSON.stringify({ id: editingClinicId, ...clinicForm }),
+          headers: { "Content-Type": "application/json" },
+        });
+      } else {
+        await fetch("/api/clinics", {
+          method: "POST",
+          body: JSON.stringify(clinicForm),
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      setClinicForm({ name: "", address: "", city: "", phone: "", latitude: "", longitude: "", mapUrl: "" });
+      setEditingClinicId(null);
+      await loadClinics();
+    } catch { /* empty */ }
+    setClinicLoading(false);
+  };
+
+  const handleEditClinic = (c: ClinicDoc) => {
+    setEditingClinicId(c.id);
+    setClinicForm({
+      name: c.name,
+      address: c.address,
+      city: c.city,
+      phone: c.phone,
+      latitude: c.latitude !== undefined ? String(c.latitude) : "",
+      longitude: c.longitude !== undefined ? String(c.longitude) : "",
+      mapUrl: c.mapUrl ?? "",
+    });
+  };
+
+  const handleDeleteClinic = async (id: string) => {
+    if (clinics.length <= 1) return;
+    setClinicLoading(true);
+    try {
+      await fetch("/api/clinics", {
+        method: "DELETE",
+        body: JSON.stringify({ id }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await loadClinics();
+    } catch { /* empty */ }
+    setClinicLoading(false);
+  };
+
+  // ─── Availability CRUD ─────────────────────────────────────
+  const toggleDay = (day: number) => {
+    setAvForm((f) => ({
+      ...f,
+      selectedDays: f.selectedDays.includes(day)
+        ? f.selectedDays.filter((d) => d !== day)
+        : [...f.selectedDays, day],
+    }));
+  };
+
+  const toggleAllDays = () => {
+    setAvForm((f) => ({
+      ...f,
+      selectedDays: f.selectedDays.length === 7 ? [] : [0, 1, 2, 3, 4, 5, 6],
+    }));
+  };
+
+  const handleSaveAvailability = async () => {
+    setAvError("");
+    if (!avForm.clinicId) return;
+    if (avForm.repeatWeekly && avForm.selectedDays.length === 0) {
+      setAvError("Please select at least one day.");
+      return;
+    }
+    if (!avForm.repeatWeekly && !avForm.specificDate) {
+      setAvError("Please pick a date for this one-off slot.");
+      return;
+    }
+    if (avForm.endTime <= avForm.startTime) {
+      setAvError("End time must be later than start time.");
+      return;
+    }
+    setAvLoading(true);
+    try {
+      const res = await fetch("/api/availability", {
+        method: "POST",
+        body: JSON.stringify({
+          clinicId: avForm.clinicId,
+          repeatWeekly: avForm.repeatWeekly,
+          ...(avForm.repeatWeekly
+            ? { daysOfWeek: avForm.selectedDays }
+            : { specificDate: avForm.specificDate }),
+          startTime: avForm.startTime,
+          endTime: avForm.endTime,
+          slotDuration: avForm.slotDuration,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setAvError(data.error ?? "Failed to save availability.");
+      } else {
+        setAvForm((f) => ({ ...f, selectedDays: [], specificDate: "" }));
+        await loadAvailability();
+      }
+    } catch {
+      setAvError("Network error.");
+    }
+    setAvLoading(false);
+  };
+
+  const handleDeleteAvailability = async (id: string) => {
+    setAvLoading(true);
+    try {
+      await fetch("/api/availability", {
+        method: "DELETE",
+        body: JSON.stringify({ id }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await loadAvailability();
+    } catch { /* empty */ }
+    setAvLoading(false);
+  };
+
+  // ─── Receptionist CRUD ─────────────────────────────────────
+  const [recError, setRecError] = useState("");
+
+  const handleInviteReceptionist = async () => {
+    setRecError("");
+    setRecTempPassword("");
+
+    // Validate with user feedback instead of silent return
+    if (!recForm.name.trim()) {
+      setRecError("Please enter the receptionist's name.");
+      return;
+    }
+    if (!recForm.email.trim()) {
+      setRecError("Please enter the receptionist's email.");
+      return;
+    }
+    if (recForm.assignedClinicIds.length === 0) {
+      setRecError("Please assign the receptionist to at least one clinic.");
+      return;
+    }
+
+    setRecLoading(true);
+    try {
+      const res = await fetch("/api/receptionists", {
+        method: "POST",
+        body: JSON.stringify(recForm),
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRecTempPassword(data.tempPassword);
+        setRecForm({ name: "", email: "", phone: "", assignedClinicIds: [] });
+        await loadReceptionists();
+      } else {
+        setRecError(data.error ?? "Failed to invite receptionist.");
+      }
+    } catch {
+      setRecError("Network error. Please try again.");
+    }
+    setRecLoading(false);
+  };
+
+  const handleRemoveReceptionist = async (uid: string) => {
+    setRecLoading(true);
+    try {
+      await fetch("/api/receptionists", {
+        method: "DELETE",
+        body: JSON.stringify({ uid }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await loadReceptionists();
+    } catch { /* empty */ }
+    setRecLoading(false);
+  };
+
+  const toggleClinicAssignment = (clinicId: string) => {
+    setRecForm((f) => ({
+      ...f,
+      assignedClinicIds: f.assignedClinicIds.includes(clinicId)
+        ? f.assignedClinicIds.filter((id) => id !== clinicId)
+        : [...f.assignedClinicIds, clinicId],
+    }));
+  };
+
+  // ─── Render ────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-6 w-40 rounded-lg" />
+        <Skeleton className="h-72 rounded-2xl" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* ── Profile Info ─────────────────────────────────────── */}
+      <div className="flex items-center gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">Doctor Profile</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage your practice details and PMDC verification.
+          </p>
+        </div>
+        {pmdc && <Badge variant="success">PMDC Verified</Badge>}
+      </div>
+
+      <Card>
+        <CardContent className="space-y-4 p-5">
+          {message && (
+            <div className="rounded-xl border border-primary/25 bg-primary/5 px-3 py-2 text-sm text-foreground">
+              {message}
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Full name</label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dr. Your Name" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">PMDC Registration No.</label>
+              <Input value={pmdc} disabled placeholder="12345-P" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Primary Specialty</label>
+              <Input value={specialty} onChange={(e) => setSpecialty(e.target.value)} placeholder="e.g. Cardiologist" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Consultation Fee (PKR)</label>
+              <Input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 2000" type="number" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">City</label>
+              <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="e.g. Lahore" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Bio</label>
+              <Input value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Short bio..." />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className="text-xs font-semibold text-foreground">
+                Profile picture URL{" "}
+                <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <div className="flex items-center gap-3">
+                {photoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={photoUrl}
+                    alt="Doctor preview"
+                    className="h-12 w-12 rounded-full border border-border object-cover"
+                  />
+                )}
+                <Input
+                  value={photoUrl}
+                  onChange={(e) => setPhotoUrl(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+            </div>
+          </div>
+          <Button className="rounded-xl bg-blue-600 text-white hover:bg-blue-700" onClick={handleSaveProfile} disabled={saving}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save Profile
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Clinic Management ────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <Building2 className="h-4 w-4 text-primary" />
+        <h2 className="text-base font-semibold text-foreground">Clinics</h2>
+      </div>
+
+      {/* Existing clinics */}
+      {clinics.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {clinics.map((c) => (
+            <Card key={c.id}>
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{c.name}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{c.address}, {c.city}</p>
+                    {c.phone && <p className="mt-0.5 text-xs text-muted-foreground">{c.phone}</p>}
+                    {(c.mapUrl || (c.latitude !== undefined && c.longitude !== undefined)) && (
+                      <a
+                        href={
+                          c.mapUrl ||
+                          `https://www.google.com/maps/search/?api=1&query=${c.latitude},${c.longitude}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 inline-block text-xs text-blue-600 hover:underline"
+                      >
+                        View on Google Maps
+                      </a>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditClinic(c)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteClinic(c.id)}
+                      disabled={clinics.length <= 1}
+                      title={clinics.length <= 1 ? "Must have at least 1 clinic" : "Delete clinic"}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Add / Edit clinic form */}
+      <Card>
+        <CardContent className="p-5">
+          <p className="mb-3 text-sm font-semibold text-foreground">
+            {editingClinicId ? "Edit Clinic" : "Add Clinic"}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input placeholder="Clinic name" value={clinicForm.name} onChange={(e) => setClinicForm((f) => ({ ...f, name: e.target.value }))} />
+            <Input placeholder="City" value={clinicForm.city} onChange={(e) => setClinicForm((f) => ({ ...f, city: e.target.value }))} />
+            <Input placeholder="Full address" value={clinicForm.address} onChange={(e) => setClinicForm((f) => ({ ...f, address: e.target.value }))} className="sm:col-span-2" />
+            <Input placeholder="Phone (optional)" value={clinicForm.phone} onChange={(e) => setClinicForm((f) => ({ ...f, phone: e.target.value }))} />
+            <Input
+              placeholder="Latitude (optional, e.g. 31.5204)"
+              value={clinicForm.latitude}
+              onChange={(e) => setClinicForm((f) => ({ ...f, latitude: e.target.value }))}
+              inputMode="decimal"
+            />
+            <Input
+              placeholder="Longitude (optional, e.g. 74.3587)"
+              value={clinicForm.longitude}
+              onChange={(e) => setClinicForm((f) => ({ ...f, longitude: e.target.value }))}
+              inputMode="decimal"
+            />
+            <Input
+              placeholder="Google Maps link (optional)"
+              value={clinicForm.mapUrl}
+              onChange={(e) => setClinicForm((f) => ({ ...f, mapUrl: e.target.value }))}
+              className="sm:col-span-2"
+            />
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Tip: open Google Maps, right-click your clinic, then click the coordinates to copy them — or use Share → Copy link.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button className="rounded-xl bg-blue-600 text-white hover:bg-blue-700" onClick={handleSaveClinic} disabled={clinicLoading}>
+              {clinicLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Plus className="mr-1 h-4 w-4" />
+              {editingClinicId ? "Update Clinic" : "Add Clinic"}
+            </Button>
+            {editingClinicId && (
+              <Button variant="outline" className="rounded-xl" onClick={() => { setEditingClinicId(null); setClinicForm({ name: "", address: "", city: "", phone: "", latitude: "", longitude: "", mapUrl: "" }); }}>
+                <X className="mr-1 h-4 w-4" /> Cancel
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Availability ─────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <Calendar className="h-4 w-4 text-primary" />
+        <h2 className="text-base font-semibold text-foreground">Availability</h2>
+      </div>
+
+      {/* Existing availability blocks */}
+      {availability.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {availability.map((a) => {
+            const clinic = clinics.find((c) => c.id === a.clinicId);
+            return (
+              <Card key={a.id}>
+                <CardContent className="flex items-center justify-between p-3">
+                  <div>
+                    <p className="text-xs font-semibold text-foreground">
+                      {a.repeatWeekly === false && a.specificDate
+                        ? a.specificDate
+                        : DAY_NAMES[a.dayOfWeek]}
+                      {a.repeatWeekly === false ? (
+                        <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] font-medium text-muted-foreground">
+                          one-off
+                        </span>
+                      ) : (
+                        <span className="ml-1 rounded bg-blue-50 px-1 py-0.5 text-[9px] font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">
+                          weekly
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      {formatTime(a.startTime)} - {formatTime(a.endTime)} ({a.slotDuration}min)
+                    </p>
+                    {clinic && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">{clinic.name}</p>
+                    )}
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDeleteAvailability(a.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add availability form */}
+      <Card>
+        <CardContent className="p-5">
+          <p className="mb-3 text-sm font-semibold text-foreground">Add Availability</p>
+          {avError && (
+            <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {avError}
+            </div>
+          )}
+          {/* Recurring toggle — defaults to OFF so slots are NOT auto-applied
+              to every upcoming week unless the doctor explicitly opts in. */}
+          <label className="mb-3 flex items-start gap-2 rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+            <input
+              type="checkbox"
+              checked={avForm.repeatWeekly}
+              onChange={(e) =>
+                setAvForm((f) => ({
+                  ...f,
+                  repeatWeekly: e.target.checked,
+                  selectedDays: [],
+                  specificDate: "",
+                }))
+              }
+              className="mt-0.5 h-4 w-4 accent-blue-600"
+            />
+            <span>
+              <span className="font-semibold text-foreground">Repeat weekly</span>
+              <span className="ml-1 text-muted-foreground">
+                — apply this to every upcoming week. Leave off to add a one-off slot for a specific date.
+              </span>
+            </span>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {clinics.length > 1 && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground">Clinic</label>
+                <select
+                  value={avForm.clinicId}
+                  onChange={(e) => setAvForm((f) => ({ ...f, clinicId: e.target.value }))}
+                  className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {clinics.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {avForm.repeatWeekly ? (
+              <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
+                <label className="text-xs font-semibold text-foreground">Days</label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleAllDays}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      avForm.selectedDays.length === 7
+                        ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
+                        : "border-border text-muted-foreground hover:border-foreground/30"
+                    }`}
+                  >
+                    Everyday
+                  </button>
+                  {DAY_NAMES.map((d, i) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => toggleDay(i)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        avForm.selectedDays.includes(i)
+                          ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
+                          : "border-border text-muted-foreground hover:border-foreground/30"
+                      }`}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground">Date</label>
+                <Input
+                  type="date"
+                  value={avForm.specificDate}
+                  onChange={(e) =>
+                    setAvForm((f) => ({ ...f, specificDate: e.target.value }))
+                  }
+                />
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Start Time</label>
+              <Input type="time" value={avForm.startTime} onChange={(e) => setAvForm((f) => ({ ...f, startTime: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">End Time</label>
+              <Input type="time" value={avForm.endTime} onChange={(e) => setAvForm((f) => ({ ...f, endTime: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Slot Duration</label>
+              <select
+                value={avForm.slotDuration}
+                onChange={(e) => setAvForm((f) => ({ ...f, slotDuration: Number(e.target.value) as SlotDuration }))}
+                className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {SLOT_DURATIONS.map((d) => (
+                  <option key={d} value={d}>{d} minutes</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <Button
+            className="mt-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+            onClick={handleSaveAvailability}
+            disabled={
+              avLoading ||
+              clinics.length === 0 ||
+              (avForm.repeatWeekly
+                ? avForm.selectedDays.length === 0
+                : !avForm.specificDate)
+            }
+          >
+            {avLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Plus className="mr-1 h-4 w-4" />
+            {avForm.repeatWeekly
+              ? `Add Recurring Slot${avForm.selectedDays.length > 1 ? "s" : ""}${
+                  avForm.selectedDays.length > 0
+                    ? ` (${avForm.selectedDays.length} day${avForm.selectedDays.length > 1 ? "s" : ""})`
+                    : ""
+                }`
+              : "Add One-off Slot"}
+          </Button>
+          {clinics.length === 0 && (
+            <p className="mt-2 text-xs text-amber-600">Add a clinic first before setting availability.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Receptionists ────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <Users className="h-4 w-4 text-primary" />
+        <h2 className="text-base font-semibold text-foreground">Receptionists</h2>
+        <Badge variant="outline" className="text-[10px]">Optional</Badge>
+      </div>
+
+      {/* Existing receptionists */}
+      {receptionists.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {receptionists.map((r) => (
+            <Card key={r.uid}>
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{r.name}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{r.email}</p>
+                    {r.phone && <p className="mt-0.5 text-xs text-muted-foreground">{r.phone}</p>}
+                    <Badge
+                      variant={r.inviteStatus === "joined" ? "success" : "warning"}
+                      className="mt-1 text-[10px]"
+                    >
+                      {r.inviteStatus === "joined" ? "Joined" : "Invited"}
+                    </Badge>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive"
+                    onClick={() => handleRemoveReceptionist(r.uid)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Invite receptionist form */}
+      <Card>
+        <CardContent className="p-5">
+          <p className="mb-3 text-sm font-semibold text-foreground">Invite Receptionist</p>
+          {recError && (
+            <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {recError}
+            </div>
+          )}
+          {recTempPassword && (
+            <div className="mb-3 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm dark:border-green-500/30 dark:bg-green-500/10">
+              <p className="font-semibold text-green-700 dark:text-green-400">Receptionist invited!</p>
+              <p className="mt-1 text-green-600 dark:text-green-300">
+                Temporary password: <code className="rounded bg-green-100 px-1.5 py-0.5 font-mono text-xs dark:bg-green-800">{recTempPassword}</code>
+              </p>
+              <p className="mt-1 text-xs text-green-600/80 dark:text-green-400/80">
+                Share these credentials with the receptionist. They can log in at the login page using <strong>Email</strong> sign-in.
+              </p>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input placeholder="Name" value={recForm.name} onChange={(e) => setRecForm((f) => ({ ...f, name: e.target.value }))} />
+            <Input placeholder="Email" type="email" value={recForm.email} onChange={(e) => setRecForm((f) => ({ ...f, email: e.target.value }))} />
+            <Input placeholder="Phone (optional)" value={recForm.phone} onChange={(e) => setRecForm((f) => ({ ...f, phone: e.target.value }))} />
+          </div>
+          {clinics.length > 0 && (
+            <div className="mt-3">
+              <label className="text-xs font-semibold text-foreground">Assign to clinics</label>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {clinics.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleClinicAssignment(c.id)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      recForm.assignedClinicIds.includes(c.id)
+                        ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
+                        : "border-border text-muted-foreground hover:border-foreground/30"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <Button className="mt-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700" onClick={handleInviteReceptionist} disabled={recLoading || clinics.length === 0}>
+            {recLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <UserPlus className="mr-1 h-4 w-4" /> Invite Receptionist
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

@@ -45,7 +45,7 @@ export default function AppPortal() {
           normalizeRole(token.claims.type);
 
         if (role === "patient") router.replace("/o/patient");
-        else if (role === "doctor" || role === "dentist") router.replace("/o/dentist");
+        else if (role === "doctor" || role === "dentist") router.replace("/o/doctor");
         else if (role === "reception") router.replace("/o/reception");
         else if (role === "admin") router.replace("/o/admin");
         else setStatus("needs-role");
@@ -112,7 +112,7 @@ export default function AppPortal() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <RoleCard href="/o/patient" icon={User} title="Patient" desc="Book appointments and view records." />
-          <RoleCard href="/o/dentist" icon={Stethoscope} title="Doctor" desc="Manage appointments and patients." />
+          <RoleCard href="/o/doctor" icon={Stethoscope} title="Doctor" desc="Manage appointments and patients." />
           <RoleCard href="/o/reception" icon={Users} title="Reception" desc="Coordinate check-ins and schedules." />
           <RoleCard href="/o/admin" icon={Shield} title="Admin" desc="Manage users and platform settings." />
         </div>

@@ -21,12 +21,12 @@ export const patientNav: DashboardNavItem[] = [
   { href: "/o/patient/profile", label: "Profile", icon: UserCircle },
 ];
 
-export const dentistNav: DashboardNavItem[] = [
-  { href: "/o/dentist", label: "Overview", icon: BarChart3 },
-  { href: "/o/dentist/patients", label: "My Patients", icon: Stethoscope },
-  { href: "/o/dentist/appointments", label: "Appointments", icon: ClipboardList },
-  { href: "/o/dentist/reports", label: "Reports", icon: FileText },
-  { href: "/o/dentist/profile", label: "Profile", icon: UserCircle },
+export const doctorNav: DashboardNavItem[] = [
+  { href: "/o/doctor", label: "Overview", icon: BarChart3 },
+  { href: "/o/doctor/patients", label: "My Patients", icon: Stethoscope },
+  { href: "/o/doctor/appointments", label: "Appointments", icon: ClipboardList },
+  { href: "/o/doctor/reports", label: "Reports", icon: FileText },
+  { href: "/o/doctor/profile", label: "Profile", icon: UserCircle },
 ];
 
 export const receptionNav: DashboardNavItem[] = [

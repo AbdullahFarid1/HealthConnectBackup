@@ -196,6 +196,25 @@ export default function RegisterPage() {
         body: JSON.stringify({ idToken }),
         headers: { "Content-Type": "application/json" },
       });
+
+      // Save user profile to Firestore + set custom claims
+      await fetch("/api/users", {
+        method: "POST",
+        body: JSON.stringify({
+          name: trimmedName,
+          role: accountType,
+          email: trimmedEmail,
+          ...(city.trim() ? { city: city.trim() } : {}),
+          ...(accountType === "doctor"
+            ? { specialty: specialty.trim(), pmdcRegistrationNo: pmdc.trim() }
+            : {}),
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      // Clear pending profile — it has been saved to Firestore
+      sessionStorage.removeItem(STORAGE_KEY);
+
       window.location.href = "/app";
     } catch (err: unknown) {
       setFormError(firebaseRegisterError(err));

@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { Appointment } from "@/types";
 
 const statusVariant = (s: string) =>
-  s === "confirmed" || s === "pending"
+  s === "confirmed"
     ? "info"
     : s === "completed"
       ? "success"
@@ -15,7 +15,7 @@ const statusVariant = (s: string) =>
         ? "destructive"
         : "secondary";
 
-export default function PatientAppointments() {
+export default function DoctorAppointments() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,13 +36,12 @@ export default function PatientAppointments() {
     <>
       <div>
         <h2 className="text-base font-semibold text-foreground">
-          My Appointments
+          Appointments
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          View and manage your upcoming and past appointments.
+          Today&apos;s and upcoming appointment lists.
         </p>
       </div>
-
       <Card>
         <CardContent className="p-5">
           {loading ? (
@@ -53,7 +52,7 @@ export default function PatientAppointments() {
             </div>
           ) : appointments.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              No appointments yet. Book your first one from the dashboard.
+              No appointments yet.
             </p>
           ) : (
             <div className="space-y-3">
@@ -62,13 +61,18 @@ export default function PatientAppointments() {
                   key={apt.id}
                   className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 px-4 py-3"
                 >
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-semibold text-foreground">
-                      {apt.doctorName}
+                      {apt.patientName}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {apt.type} &middot; {apt.date} &middot; {apt.timeSlot}
                     </p>
+                    {apt.notes && (
+                      <p className="mt-1 text-xs text-muted-foreground italic">
+                        Notes: {apt.notes}
+                      </p>
+                    )}
                   </div>
                   <Badge
                     variant={statusVariant(apt.status)}

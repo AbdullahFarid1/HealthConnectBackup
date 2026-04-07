@@ -131,6 +131,40 @@ export default function AuthLoginPage() {
         body: JSON.stringify({ idToken }),
         headers: { "Content-Type": "application/json" },
       });
+
+      const STORAGE_KEY = "healthconnect_pending_profile";
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+
+      if (raw && fromRegister) {
+        // Only use pending profile if coming directly from registration flow
+        try {
+          const pending = JSON.parse(raw);
+
+          // Double-check: only create if the user has no profile yet
+          const meRes = await fetch("/api/users/me");
+          if (meRes.status === 404) {
+            await fetch("/api/users", {
+              method: "POST",
+              body: JSON.stringify({
+                name: pending.name,
+                role: pending.accountType,
+                phone: pending.phone,
+                ...(pending.city ? { city: pending.city } : {}),
+                ...(pending.specialty ? { specialty: pending.specialty } : {}),
+                ...(pending.pmdcRegistrationNo
+                  ? { pmdcRegistrationNo: pending.pmdcRegistrationNo }
+                  : {}),
+              }),
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        } catch {
+          // Profile save failed — user can fix via profile page later
+        }
+      }
+      // Always clear to prevent stale data
+      sessionStorage.removeItem(STORAGE_KEY);
+
       window.location.href = "/app";
     } catch (err: unknown) {
       setError(authErrorMessage(err));
@@ -145,7 +179,51 @@ export default function AuthLoginPage() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
-      await establishSessionAndRedirect();
+
+      const STORAGE_KEY = "healthconnect_pending_profile";
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+
+      // Always create session first
+      const idToken = await auth.currentUser!.getIdToken(true);
+      await fetch("/api/auth/session", {
+        method: "POST",
+        body: JSON.stringify({ idToken }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (raw && fromRegister) {
+        // Only use pending profile if we came directly from the registration flow.
+        // This prevents stale sessionStorage from a previous registration from
+        // corrupting a different user's login.
+        try {
+          const pending = JSON.parse(raw);
+
+          // Double-check: only create if the user has no profile yet
+          const meRes = await fetch("/api/users/me");
+          if (meRes.status === 404) {
+            await fetch("/api/users", {
+              method: "POST",
+              body: JSON.stringify({
+                name: pending.name,
+                role: pending.accountType,
+                email: pending.email,
+                ...(pending.city ? { city: pending.city } : {}),
+                ...(pending.specialty ? { specialty: pending.specialty } : {}),
+                ...(pending.pmdcRegistrationNo
+                  ? { pmdcRegistrationNo: pending.pmdcRegistrationNo }
+                  : {}),
+              }),
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        } catch {
+          // Profile save failed — can fix via profile page later
+        }
+      }
+      // Always clear pending profile data to prevent stale data affecting future logins
+      sessionStorage.removeItem(STORAGE_KEY);
+
+      window.location.href = "/app";
     } catch (err: unknown) {
       setError(authErrorMessage(err));
     } finally {
