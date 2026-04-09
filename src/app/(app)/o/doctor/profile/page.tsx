@@ -12,6 +12,8 @@ import {
   UserPlus,
   Users,
   X,
+  Upload,
+  MapPin,
 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,6 +50,8 @@ export default function DoctorProfile() {
   const [city, setCity] = useState("");
   const [bio, setBio] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [photoMessage, setPhotoMessage] = useState("");
+  const [photoMessageKind, setPhotoMessageKind] = useState<"info" | "success" | "error">("info");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -59,10 +63,9 @@ export default function DoctorProfile() {
     address: "",
     city: "",
     phone: "",
-    latitude: "",
-    longitude: "",
     mapUrl: "",
   });
+  const [locationMessage, setLocationMessage] = useState("");
   const [editingClinicId, setEditingClinicId] = useState<string | null>(null);
   const [clinicLoading, setClinicLoading] = useState(false);
 
@@ -192,8 +195,9 @@ export default function DoctorProfile() {
           headers: { "Content-Type": "application/json" },
         });
       }
-      setClinicForm({ name: "", address: "", city: "", phone: "", latitude: "", longitude: "", mapUrl: "" });
+      setClinicForm({ name: "", address: "", city: "", phone: "", mapUrl: "" });
       setEditingClinicId(null);
+      setLocationMessage("");
       await loadClinics();
     } catch { /* empty */ }
     setClinicLoading(false);
@@ -206,10 +210,60 @@ export default function DoctorProfile() {
       address: c.address,
       city: c.city,
       phone: c.phone,
-      latitude: c.latitude !== undefined ? String(c.latitude) : "",
-      longitude: c.longitude !== undefined ? String(c.longitude) : "",
       mapUrl: c.mapUrl ?? "",
     });
+  };
+
+  // ─── Profile picture (simulated upload) ────────────────────
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting same file
+    if (!file) return;
+
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+    if (!allowed.includes(file.type)) {
+      setPhotoMessageKind("error");
+      setPhotoMessage("Invalid file type. Please choose a JPG, PNG, WEBP, or GIF image.");
+      return;
+    }
+
+    setPhotoMessageKind("info");
+    setPhotoMessage("Uploading image… (simulated — Firebase Storage is not yet wired up)");
+
+    // Simulate an upload by reading as a data URL so we can preview locally.
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setPhotoUrl(dataUrl);
+      setPhotoMessageKind("success");
+      setPhotoMessage("Profile picture updated. (Simulated upload — click Save Profile to persist the URL.)");
+    };
+    reader.onerror = () => {
+      setPhotoMessageKind("error");
+      setPhotoMessage("Unable to store image. Please try again.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoUrl("");
+    setPhotoMessageKind("info");
+    setPhotoMessage("Profile picture removed.");
+  };
+
+  // ─── Clinic location picker (simulated Google Maps) ───────
+  const handleAttachLocation = () => {
+    setLocationMessage("Opening Google Maps… (simulated). Pick your clinic and we'll capture the share link.");
+    // Simulate a chosen location after a short delay so the user can read the message.
+    setTimeout(() => {
+      const fakeLat = (24 + Math.random() * 9).toFixed(6);
+      const fakeLng = (67 + Math.random() * 8).toFixed(6);
+      const url = `https://www.google.com/maps/search/?api=1&query=${fakeLat},${fakeLng}`;
+      setClinicForm((f) => ({ ...f, mapUrl: url }));
+      setLocationMessage(
+        `Location captured (simulated). Stored map link: ${url}`
+      );
+    }, 900);
   };
 
   const handleDeleteClinic = async (id: string) => {
@@ -421,24 +475,67 @@ export default function DoctorProfile() {
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <label className="text-xs font-semibold text-foreground">
-                Profile picture URL{" "}
-                <span className="font-normal text-muted-foreground">(optional)</span>
+                Profile picture{" "}
+                <span className="font-normal text-muted-foreground">(optional — shown on patient search results)</span>
               </label>
               <div className="flex items-center gap-3">
-                {photoUrl && (
+                {photoUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={photoUrl}
                     alt="Doctor preview"
-                    className="h-12 w-12 rounded-full border border-border object-cover"
+                    className="h-14 w-14 rounded-full border border-border object-cover"
                   />
+                ) : (
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-border bg-muted/40 text-[10px] text-muted-foreground">
+                    No photo
+                  </div>
                 )}
-                <Input
-                  value={photoUrl}
-                  onChange={(e) => setPhotoUrl(e.target.value)}
-                  placeholder="https://..."
-                />
+                <div className="flex flex-wrap gap-2">
+                  <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-input bg-background px-4 text-sm font-medium hover:bg-muted">
+                    <Upload className="h-4 w-4" />
+                    Attach Profile Picture
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handlePhotoSelect}
+                    />
+                  </label>
+                  {photoUrl && (
+                    <Button
+                      variant="outline"
+                      type="button"
+                      className="rounded-xl"
+                      onClick={handleRemovePhoto}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
               </div>
+              {photoMessage && (
+                <div
+                  className={`mt-2 rounded-xl border px-3 py-2 text-xs ${
+                    photoMessageKind === "success"
+                      ? "border-green-300 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300"
+                      : photoMessageKind === "error"
+                        ? "border-destructive/30 bg-destructive/10 text-destructive"
+                        : "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span>{photoMessage}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPhotoMessage("")}
+                      className="text-xs font-semibold underline"
+                    >
+                      OK
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <Button className="rounded-xl bg-blue-600 text-white hover:bg-blue-700" onClick={handleSaveProfile} disabled={saving}>
@@ -465,12 +562,9 @@ export default function DoctorProfile() {
                     <p className="text-sm font-semibold text-foreground">{c.name}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">{c.address}, {c.city}</p>
                     {c.phone && <p className="mt-0.5 text-xs text-muted-foreground">{c.phone}</p>}
-                    {(c.mapUrl || (c.latitude !== undefined && c.longitude !== undefined)) && (
+                    {c.mapUrl && (
                       <a
-                        href={
-                          c.mapUrl ||
-                          `https://www.google.com/maps/search/?api=1&query=${c.latitude},${c.longitude}`
-                        }
+                        href={c.mapUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mt-0.5 inline-block text-xs text-blue-600 hover:underline"
@@ -512,28 +606,58 @@ export default function DoctorProfile() {
             <Input placeholder="City" value={clinicForm.city} onChange={(e) => setClinicForm((f) => ({ ...f, city: e.target.value }))} />
             <Input placeholder="Full address" value={clinicForm.address} onChange={(e) => setClinicForm((f) => ({ ...f, address: e.target.value }))} className="sm:col-span-2" />
             <Input placeholder="Phone (optional)" value={clinicForm.phone} onChange={(e) => setClinicForm((f) => ({ ...f, phone: e.target.value }))} />
-            <Input
-              placeholder="Latitude (optional, e.g. 31.5204)"
-              value={clinicForm.latitude}
-              onChange={(e) => setClinicForm((f) => ({ ...f, latitude: e.target.value }))}
-              inputMode="decimal"
-            />
-            <Input
-              placeholder="Longitude (optional, e.g. 74.3587)"
-              value={clinicForm.longitude}
-              onChange={(e) => setClinicForm((f) => ({ ...f, longitude: e.target.value }))}
-              inputMode="decimal"
-            />
-            <Input
-              placeholder="Google Maps link (optional)"
-              value={clinicForm.mapUrl}
-              onChange={(e) => setClinicForm((f) => ({ ...f, mapUrl: e.target.value }))}
-              className="sm:col-span-2"
-            />
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            Tip: open Google Maps, right-click your clinic, then click the coordinates to copy them — or use Share → Copy link.
-          </p>
+
+          <div className="mt-3 space-y-2">
+            <label className="text-xs font-semibold text-foreground">Clinic location</label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl"
+                onClick={handleAttachLocation}
+              >
+                <MapPin className="mr-2 h-4 w-4" /> Attach Location
+              </Button>
+              {clinicForm.mapUrl && (
+                <a
+                  href={clinicForm.mapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Preview on Google Maps
+                </a>
+              )}
+              {clinicForm.mapUrl && (
+                <button
+                  type="button"
+                  onClick={() => setClinicForm((f) => ({ ...f, mapUrl: "" }))}
+                  className="text-xs text-muted-foreground underline"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Tapping <strong>Attach Location</strong> would normally open Google Maps so you can search for your clinic, use your current location, or pick a point manually. We capture the resulting share link.
+            </p>
+            {locationMessage && (
+              <div className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="break-all">{locationMessage}</span>
+                  <button
+                    type="button"
+                    onClick={() => setLocationMessage("")}
+                    className="text-xs font-semibold underline"
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="mt-3 flex gap-2">
             <Button className="rounded-xl bg-blue-600 text-white hover:bg-blue-700" onClick={handleSaveClinic} disabled={clinicLoading}>
               {clinicLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -541,7 +665,7 @@ export default function DoctorProfile() {
               {editingClinicId ? "Update Clinic" : "Add Clinic"}
             </Button>
             {editingClinicId && (
-              <Button variant="outline" className="rounded-xl" onClick={() => { setEditingClinicId(null); setClinicForm({ name: "", address: "", city: "", phone: "", latitude: "", longitude: "", mapUrl: "" }); }}>
+              <Button variant="outline" className="rounded-xl" onClick={() => { setEditingClinicId(null); setClinicForm({ name: "", address: "", city: "", phone: "", mapUrl: "" }); setLocationMessage(""); }}>
                 <X className="mr-1 h-4 w-4" /> Cancel
               </Button>
             )}

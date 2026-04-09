@@ -11,6 +11,8 @@ import {
   MapPin,
   Star,
   Stethoscope,
+  User as UserIcon,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,7 @@ export default function DoctorDetailPage() {
   const [clinics, setClinics] = useState<ClinicDoc[]>([]);
   const [availability, setAvailability] = useState<AvailabilityDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [photoOpen, setPhotoOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -78,26 +81,78 @@ export default function DoctorDetailPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
       {/* Header */}
-      <div className="max-w-2xl">
-        <div className="mb-3 flex items-center gap-2">
-          <Badge variant="secondary">Doctor</Badge>
-          {!doctor.pmdcRegistrationNo && (
-            <Badge variant="outline" className="text-amber-600">
-              Unverified
-            </Badge>
+      <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
+        {/* Profile picture (clickable → lightbox) */}
+        <button
+          type="button"
+          onClick={() => doctor.photoUrl && setPhotoOpen(true)}
+          className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-2xl border border-border bg-muted shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:h-28 sm:w-28"
+          aria-label="View profile picture"
+        >
+          {doctor.photoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={doctor.photoUrl}
+              alt={doctor.name}
+              className="h-full w-full object-cover transition-transform group-hover:scale-105"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+              <UserIcon className="h-10 w-10" />
+            </div>
+          )}
+        </button>
+
+        <div className="max-w-2xl">
+          <div className="mb-3 flex items-center gap-2">
+            <Badge variant="secondary">Doctor</Badge>
+            {!doctor.pmdcRegistrationNo && (
+              <Badge variant="outline" className="text-amber-600">
+                Unverified
+              </Badge>
+            )}
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+            {doctor.name}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {doctor.specialty ?? "General Practitioner"}
+            {doctor.city && <> &middot; {doctor.city}</>}
+          </p>
+          {doctor.bio && (
+            <p className="mt-3 text-sm text-muted-foreground">{doctor.bio}</p>
           )}
         </div>
-        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-          {doctor.name}
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {doctor.specialty ?? "General Practitioner"}
-          {doctor.city && <> &middot; {doctor.city}</>}
-        </p>
-        {doctor.bio && (
-          <p className="mt-3 text-sm text-muted-foreground">{doctor.bio}</p>
-        )}
       </div>
+
+      {/* Lightbox */}
+      {photoOpen && doctor.photoUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setPhotoOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPhotoOpen(false);
+            }}
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={doctor.photoUrl}
+            alt={doctor.name}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl"
+          />
+        </div>
+      )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr,0.8fr]">
         {/* About */}

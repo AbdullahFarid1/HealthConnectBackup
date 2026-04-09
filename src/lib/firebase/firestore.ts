@@ -7,8 +7,15 @@ import type {
   ClinicDoc,
   AvailabilityDoc,
   UserRole,
+  NotificationDoc,
+  NotificationType,
 } from "@/types";
 import { USER_ROLES } from "@/types";
+import {
+  appointmentEnd as _appointmentEnd,
+  appointmentStart as _appointmentStart,
+  DEFAULT_SLOT_DURATION_MINUTES,
+} from "@/lib/policy";
 
 const firestore = admin.firestore();
 
@@ -40,6 +47,7 @@ const usersCol = () => firestore.collection("users");
 const appointmentsCol = () => firestore.collection("appointments");
 const clinicsCol = () => firestore.collection("clinics");
 const availabilityCol = () => firestore.collection("availability");
+const notificationsCol = () => firestore.collection("notifications");
 
 // ─── Date helpers ─────────────────────────────────────────
 // HealthConnect operates in Pakistan (Asia/Karachi, UTC+5, no DST). All
@@ -438,6 +446,74 @@ export async function updateAppointmentStatus(
   await appointmentsCol().doc(id).update({ status, updatedAt: new Date().toISOString() });
 }
 
+/** Generic partial update for an appointment doc. */
+export async function updateAppointment(
+  id: string,
+  data: Partial<Appointment>
+) {
+  await appointmentsCol()
+    .doc(id)
+    .update(clean({ ...data, updatedAt: new Date().toISOString() }));
+}
+
+/**
+ * Atomically reschedule an appointment to a new (date, timeSlot) by creating
+ * a new deterministic-ID doc and deleting the old one. Throws
+ * SlotAlreadyBookedError if the new slot is taken.
+ */
+export async function rescheduleAppointment(
+  oldId: string,
+  newDate: string,
+  newTimeSlot: string,
+  extra: Partial<Appointment>
+): Promise<string> {
+  const oldRef = appointmentsCol().doc(oldId);
+  const oldSnap = await oldRef.get();
+  if (!oldSnap.exists) throw new Error("Appointment not found");
+  const old = oldSnap.data() as Appointment;
+
+  const newId = `${old.doctorId}_${newDate}_${slotKey(newTimeSlot)}`;
+  if (newId === oldId) {
+    // Same slot — nothing to do but apply extras.
+    await oldRef.update(clean({ ...extra, updatedAt: new Date().toISOString() }));
+    return oldId;
+  }
+  const newRef = appointmentsCol().doc(newId);
+
+  await firestore.runTransaction(async (tx) => {
+    const existing = await tx.get(newRef);
+    if (existing.exists) {
+      const cur = existing.data() as Appointment;
+      if (cur.status !== "cancelled") throw new SlotAlreadyBookedError();
+    }
+    // Conflicts via legacy random IDs
+    const dupSnap = await tx.get(
+      appointmentsCol()
+        .where("doctorId", "==", old.doctorId)
+        .where("date", "==", newDate)
+        .where("timeSlot", "==", newTimeSlot)
+    );
+    for (const d of dupSnap.docs) {
+      if (d.id === newId || d.id === oldId) continue;
+      const a = d.data() as Appointment;
+      if (a.status !== "cancelled") throw new SlotAlreadyBookedError();
+    }
+
+    const merged: Appointment = {
+      ...old,
+      ...extra,
+      id: newId,
+      date: newDate,
+      timeSlot: newTimeSlot,
+      updatedAt: new Date().toISOString(),
+    };
+    tx.set(newRef, clean(merged));
+    tx.delete(oldRef);
+  });
+
+  return newId;
+}
+
 export async function listAppointmentsByPatient(
   patientId: string
 ): Promise<Appointment[]> {
@@ -527,4 +603,241 @@ export async function removeReceptionist(uid: string) {
   } catch {
     // User might already be deleted
   }
+}
+
+// ─── Notifications ────────────────────────────────────────
+export async function addNotification(
+  data: Omit<NotificationDoc, "id" | "createdAt" | "read"> & { read?: boolean }
+): Promise<string> {
+  const ref = notificationsCol().doc();
+  const doc: NotificationDoc = {
+    id: ref.id,
+    userId: data.userId,
+    type: data.type,
+    title: data.title,
+    message: data.message,
+    appointmentId: data.appointmentId,
+    link: data.link,
+    read: data.read ?? false,
+    createdAt: new Date().toISOString(),
+  };
+  await ref.set(clean(doc));
+  return ref.id;
+}
+
+/** Fan out the same notification to multiple recipients. */
+export async function notifyMany(
+  userIds: string[],
+  payload: { type: NotificationType; title: string; message: string; appointmentId?: string; link?: string }
+) {
+  await Promise.all(
+    userIds.map((uid) =>
+      addNotification({
+        userId: uid,
+        ...payload,
+      })
+    )
+  );
+}
+
+export async function listNotificationsByUser(
+  userId: string,
+  limit = 50
+): Promise<NotificationDoc[]> {
+  const snap = await notificationsCol()
+    .where("userId", "==", userId)
+    .limit(limit)
+    .get();
+  const docs = snap.docs.map((d) => d.data() as NotificationDoc);
+  return docs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function markNotificationsRead(userId: string, ids?: string[]) {
+  const batch = firestore.batch();
+  if (ids && ids.length > 0) {
+    for (const id of ids) {
+      batch.update(notificationsCol().doc(id), { read: true });
+    }
+  } else {
+    const snap = await notificationsCol()
+      .where("userId", "==", userId)
+      .where("read", "==", false)
+      .get();
+    snap.docs.forEach((d) => batch.update(d.ref, { read: true }));
+  }
+  await batch.commit();
+}
+
+// ─── Appointment maintenance (lazy cron) ──────────────────
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Run lazy maintenance on all non-final appointments:
+ *  - Cancel any "pending" appointment older than 1 hour from createdAt.
+ *  - Auto-complete confirmed appointments past their end time when:
+ *      • neither party confirmed and ≥ 24h past end, OR
+ *      • exactly one party confirmed and ≥ 12h since their confirmation.
+ *
+ * Notifications are emitted for every state change so dashboards can pick them up.
+ *
+ * Idempotent + safe to run on every appointments GET — bounded by the number
+ * of in-flight appointments which is small at our scale.
+ */
+export async function runAppointmentMaintenance(): Promise<void> {
+  const now = Date.now();
+
+  // 1) Auto-cancel pending appointments older than 1 hour.
+  const pendingSnap = await appointmentsCol().where("status", "==", "pending").get();
+  for (const d of pendingSnap.docs) {
+    const a = d.data() as Appointment;
+    const created = Date.parse(a.createdAt || "");
+    const stale = !Number.isFinite(created) || now - created >= HOUR_MS;
+    if (!stale) continue;
+
+    await d.ref.update({
+      status: "cancelled",
+      cancelledBy: "system",
+      cancelReason: "Auto-cancelled: payment not completed within 1 hour.",
+      updatedAt: new Date().toISOString(),
+    });
+    await notifyMany([a.patientId, a.doctorId], {
+      type: "auto-cancelled",
+      title: "Appointment auto-cancelled",
+      message: `Pending appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} was auto-cancelled because payment was not completed within 1 hour.`,
+      appointmentId: a.id,
+    });
+  }
+
+  // 1b) Auto-confirm patient reschedule responses: when the doctor proposed a
+  // new time, the patient must confirm/reject. Auto-confirm after 6 hours, OR
+  // ≤ 1 hour before the appointment start (whichever comes first).
+  const pendingReschedSnap = await appointmentsCol()
+    .where("pendingPatientConfirmation", "==", true)
+    .get();
+  for (const d of pendingReschedSnap.docs) {
+    const a = d.data() as Appointment;
+    const proposedAt = Date.parse(a.rescheduleProposedAt || "");
+    const proposedAge = Number.isFinite(proposedAt) ? now - proposedAt : Infinity;
+    let start: Date;
+    try {
+      start = _appointmentStart(a.date, a.timeSlot);
+    } catch {
+      continue;
+    }
+    if (!(start instanceof Date) || Number.isNaN(start.getTime())) continue;
+    const untilStart = start.getTime() - now;
+    const sixHoursElapsed = proposedAge >= 6 * HOUR_MS;
+    const oneHourBeforeStart = untilStart <= HOUR_MS;
+    if (!sixHoursElapsed && !oneHourBeforeStart) continue;
+
+    await d.ref.update({
+      pendingPatientConfirmation: false,
+      updatedAt: new Date().toISOString(),
+    });
+    await notifyMany([a.patientId, a.doctorId], {
+      type: "auto-confirmed",
+      title: "Reschedule auto-confirmed",
+      message: `The rescheduled appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} was auto-confirmed.`,
+      appointmentId: a.id,
+    });
+  }
+
+  // 2) Auto-complete confirmed appointments past their end window.
+  const confirmedSnap = await appointmentsCol().where("status", "==", "confirmed").get();
+  for (const d of confirmedSnap.docs) {
+    const a = d.data() as Appointment;
+    const slotMins = a.slotDuration ?? DEFAULT_SLOT_DURATION_MINUTES;
+    let end: Date;
+    try {
+      end = _appointmentEnd(a.date, a.timeSlot, slotMins);
+    } catch {
+      continue;
+    }
+    if (!(end instanceof Date) || Number.isNaN(end.getTime())) continue;
+    if (now < end.getTime()) continue;
+
+    const docConf = a.doctorConfirmedCompleted === true;
+    const patConf = a.patientConfirmedCompleted === true;
+    if (docConf && patConf) continue; // PATCH path handles dual-confirm
+
+    let shouldAutoComplete = false;
+    let autoConfirmedBy: "doctor" | "patient" | "both" | null = null;
+
+    if (!docConf && !patConf) {
+      if (now - end.getTime() >= 24 * HOUR_MS) {
+        shouldAutoComplete = true;
+        autoConfirmedBy = "both";
+      }
+    } else if (docConf && !patConf) {
+      const since = Date.parse(a.doctorConfirmedAt || "");
+      if (Number.isFinite(since) && now - since >= 12 * HOUR_MS) {
+        shouldAutoComplete = true;
+        autoConfirmedBy = "patient";
+      }
+    } else if (!docConf && patConf) {
+      const since = Date.parse(a.patientConfirmedAt || "");
+      if (Number.isFinite(since) && now - since >= 12 * HOUR_MS) {
+        shouldAutoComplete = true;
+        autoConfirmedBy = "doctor";
+      }
+    }
+
+    if (!shouldAutoComplete) continue;
+
+    const completedAt = new Date().toISOString();
+    const update: Partial<Appointment> = {
+      status: "completed",
+      completedAt,
+      doctorConfirmedCompleted: true,
+      patientConfirmedCompleted: true,
+      autoConfirmedBy: autoConfirmedBy ?? undefined,
+    };
+    if (autoConfirmedBy === "doctor" || autoConfirmedBy === "both") {
+      update.doctorConfirmedAt = update.doctorConfirmedAt ?? completedAt;
+    }
+    if (autoConfirmedBy === "patient" || autoConfirmedBy === "both") {
+      update.patientConfirmedAt = update.patientConfirmedAt ?? completedAt;
+    }
+    if (a.payment && a.payment.status === "held") {
+      update.payment = {
+        ...a.payment,
+        status: "released",
+        releasedAt: completedAt,
+      };
+    }
+    await d.ref.update(clean({ ...update, updatedAt: completedAt }));
+
+    await notifyMany([a.patientId, a.doctorId], {
+      type: "auto-confirmed",
+      title: "Appointment auto-confirmed",
+      message: `Your appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} was auto-confirmed and marked completed.`,
+      appointmentId: a.id,
+    });
+  }
+}
+
+/**
+ * One-shot helper used by the dev script: cancel ALL pending appointments
+ * regardless of age. Called once on the next appointments GET.
+ */
+export async function cancelAllPendingAppointments(): Promise<number> {
+  const snap = await appointmentsCol().where("status", "==", "pending").get();
+  let n = 0;
+  for (const d of snap.docs) {
+    const a = d.data() as Appointment;
+    await d.ref.update({
+      status: "cancelled",
+      cancelledBy: "system",
+      cancelReason: "Auto-cancelled: pending payment not completed.",
+      updatedAt: new Date().toISOString(),
+    });
+    await notifyMany([a.patientId, a.doctorId], {
+      type: "auto-cancelled",
+      title: "Pending appointment cancelled",
+      message: `Your pending appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} has been cancelled because payment was not completed.`,
+      appointmentId: a.id,
+    });
+    n++;
+  }
+  return n;
 }

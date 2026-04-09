@@ -89,7 +89,9 @@ export default function DoctorDashboard() {
   }, []);
 
   const today = new Date().toISOString().split("T")[0];
-  const todayAppointments = appointments.filter((a) => a.date === today);
+  const todayAppointments = appointments.filter(
+    (a) => a.date === today && a.status !== "cancelled"
+  );
   const uniquePatients = new Set(appointments.map((a) => a.patientId)).size;
 
   if (loading) {

@@ -9,6 +9,7 @@ import { HeartPulse, LogOut, Menu, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { cn } from "@/lib/utils";
 
 export type DashboardNavItem = {
@@ -140,6 +141,10 @@ function SidebarContent({
 
       {/* Bottom section */}
       <div className="border-t border-border/60 p-3 space-y-1">
+        <div className="hidden items-center justify-between px-3 py-1 lg:flex">
+          <span className="text-xs text-muted-foreground">Notifications</span>
+          <NotificationBell />
+        </div>
         <div className="flex items-center justify-between px-3 py-1">
           <span className="text-xs text-muted-foreground">Theme</span>
           <ThemeToggle />
@@ -184,6 +189,7 @@ export function DashboardLayout({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            <NotificationBell />
             <ThemeToggle />
             <Button
               variant="ghost"

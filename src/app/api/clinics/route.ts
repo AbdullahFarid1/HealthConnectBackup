@@ -42,22 +42,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "name, address, and city are required" }, { status: 400 });
   }
 
-  // Optional GPS coordinates — validate range only if supplied.
-  let latitude: number | undefined;
-  let longitude: number | undefined;
-  if (body.latitude !== undefined && body.latitude !== "") {
-    latitude = Number(body.latitude);
-    if (Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
-      return NextResponse.json({ error: "latitude must be between -90 and 90" }, { status: 400 });
-    }
-  }
-  if (body.longitude !== undefined && body.longitude !== "") {
-    longitude = Number(body.longitude);
-    if (Number.isNaN(longitude) || longitude < -180 || longitude > 180) {
-      return NextResponse.json({ error: "longitude must be between -180 and 180" }, { status: 400 });
-    }
-  }
-
   const now = new Date().toISOString();
   const id = await createClinic({
     doctorId: uid,
@@ -65,8 +49,6 @@ export async function POST(req: NextRequest) {
     address: body.address,
     city: body.city,
     phone: body.phone ?? "",
-    latitude,
-    longitude,
     mapUrl: body.mapUrl || undefined,
     createdAt: now,
     updatedAt: now,
@@ -85,28 +67,6 @@ export async function PUT(req: NextRequest) {
   const allowed: Record<string, unknown> = {};
   for (const key of ["name", "address", "city", "phone", "mapUrl"]) {
     if (body[key] !== undefined) allowed[key] = body[key];
-  }
-  if (body.latitude !== undefined) {
-    if (body.latitude === "" || body.latitude === null) {
-      allowed.latitude = null;
-    } else {
-      const lat = Number(body.latitude);
-      if (Number.isNaN(lat) || lat < -90 || lat > 90) {
-        return NextResponse.json({ error: "latitude must be between -90 and 90" }, { status: 400 });
-      }
-      allowed.latitude = lat;
-    }
-  }
-  if (body.longitude !== undefined) {
-    if (body.longitude === "" || body.longitude === null) {
-      allowed.longitude = null;
-    } else {
-      const lng = Number(body.longitude);
-      if (Number.isNaN(lng) || lng < -180 || lng > 180) {
-        return NextResponse.json({ error: "longitude must be between -180 and 180" }, { status: 400 });
-      }
-      allowed.longitude = lng;
-    }
   }
 
   await updateClinic(body.id, allowed);

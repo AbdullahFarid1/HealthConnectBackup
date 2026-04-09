@@ -1,212 +1,327 @@
 # HealthConnect
 
-**HealthConnect** is a health-tech platform tailored for the Pakistani market, connecting patients with PMDC-verified doctors. Built with **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS 4**, **shadcn/ui**, and **Firebase**.
+HealthConnect is a Pakistan-focused healthcare marketplace that connects patients with doctors and clinic teams through role-based portals, searchable profiles, and a live appointment lifecycle.
 
-## Vision
+Built with Next.js 16, React 19, TypeScript, Tailwind CSS 4, shadcn/ui, and Firebase.
 
-Create a trusted, localized healthcare ecosystem where:
-- **Patients** can quickly register, search doctors by specialty/city/rating, see transparent consultation fees (PKR), and book appointments from real-time available slots.
-- **Doctors** can register with PMDC verification, list clinics and locations, set availability and fees, and grow through patient ratings.
-- **Reception** staff can manage queues, check-ins, and daily schedules.
-- **Admins** can oversee users, verify doctors, and manage platform settings.
+## Product Vision
+
+- Help patients discover doctors by city/specialty and book reliable appointment slots.
+- Help doctors manage clinics, availability, reception staff, and appointment flow.
+- Help reception staff coordinate queues and daily operations.
+- Help admins monitor platform health and manage users.
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Framework | Next.js 16.1.6 (App Router, Turbopack) |
+|---|---|
+| Framework | Next.js 16.1.6 (App Router) |
 | Language | TypeScript 5 |
-| UI | Tailwind CSS 4 + shadcn/ui (project-local) |
+| UI | Tailwind CSS 4 + shadcn/ui |
+| Auth | Firebase Auth + Firebase session cookies |
+| Backend | Firebase Admin SDK + Firestore |
 | Icons | Lucide React |
-| Auth | Firebase Auth (Phone OTP + Email/Password + verification email) |
-| Backend | Firebase Admin SDK |
-| Theme | next-themes (light/dark/system) |
+| Theme | next-themes |
 
-## Features Implemented
+## What Is Implemented
 
-### Architecture
-- **Route group layouts** — `(public)`, `(auth)`, `(app)` with shared layouts eliminating duplicate code
-- **Role-based dashboard layouts** — Patient, Doctor, Reception, Admin each have a shared layout with navigation defined once in `src/lib/navigation.ts`
-- **Dark mode** — Full light/dark/system theme support via `next-themes` with CSS custom properties (oklch color space)
-- **TypeScript types** — Shared interfaces for `UserProfile`, `Clinic`, `Appointment`, `MedicalRecord`, `QueueEntry` in `src/types/index.ts`
-- **Error boundaries** — Global `error.tsx`, `not-found.tsx`, and route-group-specific `loading.tsx` skeletons
+### Core Architecture
 
-### UI Components
-- **Button** — Multiple variants (default, destructive, outline, secondary, ghost, link) with sizes
-- **Card** — Card, CardHeader, CardTitle, CardDescription, CardContent — dark mode compatible
-- **Input** — Styled with focus rings and dark mode support
-- **Badge** — Variants: default, secondary, destructive, outline, success, warning, info
-- **Skeleton** — Animated loading placeholders
-- **Sheet** — Mobile slide-out sidebar drawer
-- **ThemeToggle** — Sun/moon toggle for light/dark mode
-- **StatCard** — Reusable dashboard stat card with icon, value, and trend
-- **PageHeader** — Reusable section header with label, title, description
+- Route groups: `(public)`, `(auth)`, `(app)` with shared layouts.
+- Role-based navigation and dashboard shells for patient, doctor, reception, admin.
+- Shared domain types in `src/types/index.ts`.
+- Middleware gate for authenticated app areas (`/o/*`, `/app/*`).
+- Error and loading boundaries across route groups.
 
-### Pages
+### Authentication and Session
 
-#### Public (with `PublicNavbar` + `PublicFooter` via layout)
-| Route | Description |
-|-------|-------------|
-| `/` | Landing page — hero, how-it-works, for-patients/for-doctors sections, CTA |
-| `/search` | Doctor/clinic search with filters, demo results with ratings, fees, city |
-| `/c/[clinicSlug]` | Doctor/clinic profile page with location, rating, hours |
-| `/book/[clinicSlug]` | Booking form with name, phone, date |
+- Phone OTP + email/password login.
+- Registration flow for patient and doctor onboarding.
+- Firebase session cookie creation and logout endpoint.
+- Logout revokes refresh tokens server-side.
 
-#### Auth (centered card layout via layout)
-| Route | Description |
-|-------|-------------|
-| `/login` | Login entry — links to combined sign-in |
-| `/auth/login` | **Phone** (SMS + invisible reCAPTCHA) or **Email** (password). Session cookie via `/api/auth/session`. Optional *Resend verification email*. |
-| `/register` | Patient vs Doctor, then **Phone** (continue to SMS on `/auth/login`) or **Email** (create account + `sendEmailVerification` + session). Requires **Email/Password** enabled in Firebase Console. |
+### App Features
 
-#### App Portal
-| Route | Description |
-|-------|-------------|
-| `/app` | Auth-gated portal — auto-redirects by role from Firebase claims, shows role picker if no role set |
+- Real doctor search from Firestore (`/api/doctors`) with city/specialty/query filters.
+- Doctor detail endpoint with clinics + availability (`/api/doctors/[doctorId]`).
+- Firestore-backed user profile creation and profile updates.
+- Clinic CRUD for doctors (`/api/clinics`).
+- Availability management (`/api/availability`) including one-off and recurring slots.
+- Receptionist invite/list/update/remove (`/api/receptionists`).
+- Notification center with unread badge and mark-read actions (`/api/notifications`).
 
-#### Patient Dashboard (`/o/patient/...`)
-| Route | Description |
-|-------|-------------|
-| Overview | Stat cards (upcoming, recent visits, records) + recent appointments + quick actions |
-| `/book` | In-dashboard doctor search with specialty filters |
-| `/appointments` | Appointment list with status badges (confirmed/completed/cancelled) |
-| `/records` | Medical records (empty state) |
-| `/profile` | Editable profile (name, phone, city) |
+### Appointment Lifecycle
 
-#### Doctor Dashboard (`/o/dentist/...`)
-| Route | Description |
-|-------|-------------|
-| Overview | Stat cards (today's appointments, patients, avg rating) + today's schedule |
-| `/appointments` | Appointment list with patient names, types, status badges |
-| `/patients` | Patient search |
-| `/reports` | Clinical reports (empty state) |
-| `/profile` | Doctor profile with PMDC badge, specialty, consultation fee (PKR), city |
+- Booking requires payment confirmation flag and validates slot availability.
+- Transaction-safe slot reservation with deterministic appointment IDs.
+- Payment model (simulated): consultation fee + platform fee + tax.
+- Cancel/reschedule policy helpers with timezone-aware calculations (Asia/Karachi).
+- Completion confirmation by doctor/patient with auto-maintenance jobs.
+- Escrow lifecycle states: held, released, refunded.
+- Ratings and feedback after completion.
 
-#### Reception Dashboard (`/o/reception/...`)
-| Route | Description |
-|-------|-------------|
-| Overview | Stat cards (checked-in, queue, avg wait) + today's queue |
-| `/queue` | Queue management with position numbers and status |
-| `/appointments` | Today's appointment schedule with check-in status |
-| `/messages` | Messages (empty state) |
-| `/profile` | Editable profile |
+## Route Map
 
-#### Admin Dashboard (`/o/admin/...`)
-| Route | Description |
-|-------|-------------|
-| Overview | Stat cards (active users, appointments, system status) + quick actions + platform health |
-| `/users` | User management with search, role badges, PMDC verification badges |
-| `/appointments` | All appointments across platform |
-| `/analytics` | Analytics (empty state — ready for charts) |
-| `/settings` | Platform settings (name, support email, active cities) |
+### Public
 
-### API Routes
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/api/auth/session` | POST | Creates Firebase session cookie (14-day expiry) |
-| `/api/auth/logout` | POST | Clears session cookie |
+- `/` landing page
+- `/search` doctor search
+- `/c/[clinicSlug]` doctor/clinic detail
+- `/book/[clinicSlug]` booking flow
 
-### Middleware
-- `src/middleware.ts` — Protects `/app/*` routes, redirects unauthenticated users to `/login`
+### Auth
 
-## Project Structure
+- `/login`
+- `/auth/login`
+- `/register`
 
+### App Portal
+
+- `/app` role router / authenticated entry
+
+### Dashboards
+
+- Patient: `/o/patient`, `/o/patient/book`, `/o/patient/appointments`, `/o/patient/records`, `/o/patient/profile`
+- Doctor: `/o/doctor`, `/o/doctor/patients`, `/o/doctor/appointments`, `/o/doctor/reports`, `/o/doctor/profile`
+- Reception: `/o/reception`, `/o/reception/queue`, `/o/reception/appointments`, `/o/reception/messages`, `/o/reception/profile`
+- Admin: `/o/admin`, `/o/admin/users`, `/o/admin/appointments`, `/o/admin/analytics`, `/o/admin/settings`
+
+## API Surface
+
+| Route | Methods | Purpose |
+|---|---|---|
+| `/api/auth/session` | POST | Create Firebase session cookie |
+| `/api/auth/logout` | POST | Logout + refresh token revocation |
+| `/api/users` | POST | Create user profile |
+| `/api/users/me` | GET, PUT | Read/update current user profile |
+| `/api/doctors` | GET | Search doctors |
+| `/api/doctors/[doctorId]` | GET | Doctor profile + clinics + availability |
+| `/api/appointments` | GET, POST, PATCH | List/book/mutate appointment state |
+| `/api/clinics` | GET, POST, PUT, DELETE | Doctor clinic management |
+| `/api/availability` | GET, POST, DELETE | Slot management and slot lookup |
+| `/api/receptionists` | GET, POST, PUT, DELETE | Receptionist management |
+| `/api/notifications` | GET, PATCH | Notification list + mark read |
+
+## Complete Project Structure
+
+The tree below reflects the current repository layout (excluding `node_modules`, `.next`, and `.git` internals).
+
+```text
+.
+|-- .env
+|-- .env.local.example
+|-- .gitignore
+|-- AUDIT.md
+|-- components.json
+|-- eslint.config.mjs
+|-- LICENSE
+|-- next-env.d.ts
+|-- next.config.ts
+|-- package-lock.json
+|-- package.json
+|-- postcss.config.mjs
+|-- PR_DESCRIPTION.md
+|-- README.md
+|-- Readme.txt
+|-- tsconfig.json
+|-- tsconfig.tsbuildinfo
+|-- .vscode/
+|   `-- extensions.json
+|-- public/
+|   |-- file.svg
+|   |-- globe.svg
+|   |-- next.svg
+|   |-- vercel.svg
+|   `-- window.svg
+`-- src/
+	|-- middleware.ts
+	|-- app/
+	|   |-- error.tsx
+	|   |-- globals.css
+	|   |-- layout.tsx
+	|   |-- not-found.tsx
+	|   |-- page.tsx
+	|   |-- (app)/
+	|   |   |-- loading.tsx
+	|   |   |-- app/
+	|   |   |   `-- page.tsx
+	|   |   `-- o/
+	|   |       |-- admin/
+	|   |       |   |-- layout.tsx
+	|   |       |   |-- page.tsx
+	|   |       |   |-- analytics/
+	|   |       |   |   `-- page.tsx
+	|   |       |   |-- appointments/
+	|   |       |   |   `-- page.tsx
+	|   |       |   |-- settings/
+	|   |       |   |   `-- page.tsx
+	|   |       |   `-- users/
+	|   |       |       `-- page.tsx
+	|   |       |-- doctor/
+	|   |       |   |-- layout.tsx
+	|   |       |   |-- page.tsx
+	|   |       |   |-- appointments/
+	|   |       |   |   `-- page.tsx
+	|   |       |   |-- patients/
+	|   |       |   |   `-- page.tsx
+	|   |       |   |-- profile/
+	|   |       |   |   `-- page.tsx
+	|   |       |   `-- reports/
+	|   |       |       `-- page.tsx
+	|   |       |-- patient/
+	|   |       |   |-- layout.tsx
+	|   |       |   |-- page.tsx
+	|   |       |   |-- appointments/
+	|   |       |   |   `-- page.tsx
+	|   |       |   |-- book/
+	|   |       |   |   `-- page.tsx
+	|   |       |   |-- profile/
+	|   |       |   |   `-- page.tsx
+	|   |       |   `-- records/
+	|   |       |       `-- page.tsx
+	|   |       `-- reception/
+	|   |           |-- layout.tsx
+	|   |           |-- page.tsx
+	|   |           |-- appointments/
+	|   |           |   `-- page.tsx
+	|   |           |-- messages/
+	|   |           |   `-- page.tsx
+	|   |           |-- profile/
+	|   |           |   `-- page.tsx
+	|   |           `-- queue/
+	|   |               `-- page.tsx
+	|   |-- (auth)/
+	|   |   |-- layout.tsx
+	|   |   |-- loading.tsx
+	|   |   |-- auth/
+	|   |   |   `-- login/
+	|   |   |       `-- page.tsx
+	|   |   |-- login/
+	|   |   |   `-- page.tsx
+	|   |   `-- register/
+	|   |       `-- page.tsx
+	|   |-- (public)/
+	|   |   |-- layout.tsx
+	|   |   |-- book/
+	|   |   |   `-- [clinicSlug]/
+	|   |   |       `-- page.tsx
+	|   |   |-- c/
+	|   |   |   `-- [clinicSlug]/
+	|   |   |       `-- page.tsx
+	|   |   `-- search/
+	|   |       `-- page.tsx
+	|   `-- api/
+	|       |-- appointments/
+	|       |   `-- route.ts
+	|       |-- auth/
+	|       |   |-- logout/
+	|       |   |   `-- route.ts
+	|       |   `-- session/
+	|       |       `-- route.ts
+	|       |-- availability/
+	|       |   `-- route.ts
+	|       |-- clinics/
+	|       |   `-- route.ts
+	|       |-- doctors/
+	|       |   |-- route.ts
+	|       |   `-- [doctorId]/
+	|       |       `-- route.ts
+	|       |-- notifications/
+	|       |   `-- route.ts
+	|       |-- receptionists/
+	|       |   `-- route.ts
+	|       `-- users/
+	|           |-- route.ts
+	|           `-- me/
+	|               `-- route.ts
+	|-- components/
+	|   |-- appointments/
+	|   |   `-- AppointmentActions.tsx
+	|   |-- dashboard/
+	|   |   |-- PageHeader.tsx
+	|   |   `-- StatCard.tsx
+	|   |-- doctor/
+	|   |   `-- DoctorCard.tsx
+	|   |-- layout/
+	|   |   |-- DashboardLayout.tsx
+	|   |   |-- PublicFooter.tsx
+	|   |   `-- PublicNavbar.tsx
+	|   |-- notifications/
+	|   |   `-- NotificationBell.tsx
+	|   |-- providers/
+	|   |   `-- ThemeProvider.tsx
+	|   `-- ui/
+	|       |-- badge.tsx
+	|       |-- button.tsx
+	|       |-- card.tsx
+	|       |-- input.tsx
+	|       |-- sheet.tsx
+	|       |-- skeleton.tsx
+	|       `-- theme-toggle.tsx
+	|-- lib/
+	|   |-- fees.ts
+	|   |-- navigation.ts
+	|   |-- policy.ts
+	|   |-- utils.ts
+	|   `-- firebase/
+	|       |-- admin.ts
+	|       |-- client.ts
+	|       `-- firestore.ts
+	`-- types/
+		`-- index.ts
 ```
-src/
-├── app/
-│   ├── layout.tsx              # Root layout (ThemeProvider, fonts, metadata)
-│   ├── page.tsx                # Landing page
-│   ├── globals.css             # Tailwind + CSS variables (light/dark)
-│   ├── not-found.tsx           # Global 404
-│   ├── error.tsx               # Global error boundary
-│   ├── (public)/               # Public pages (shared Navbar/Footer layout)
-│   │   ├── layout.tsx
-│   │   ├── search/page.tsx
-│   │   ├── c/[clinicSlug]/page.tsx
-│   │   └── book/[clinicSlug]/page.tsx
-│   ├── (auth)/                 # Auth pages (centered card layout)
-│   │   ├── layout.tsx
-│   │   ├── loading.tsx
-│   │   ├── login/page.tsx
-│   │   ├── register/page.tsx
-│   │   └── auth/login/page.tsx
-│   ├── (app)/                  # Authenticated app
-│   │   ├── loading.tsx
-│   │   ├── app/page.tsx        # Role router / portal
-│   │   └── o/
-│   │       ├── patient/        # layout.tsx + 5 pages
-│   │       ├── dentist/        # layout.tsx + 5 pages (Doctor dashboard)
-│   │       ├── reception/      # layout.tsx + 5 pages
-│   │       └── admin/          # layout.tsx + 5 pages
-│   └── api/auth/
-│       ├── session/route.ts
-│       └── logout/route.ts
-├── components/
-│   ├── dashboard/
-│   │   ├── StatCard.tsx
-│   │   └── PageHeader.tsx
-│   ├── layout/
-│   │   ├── DashboardLayout.tsx # Sidebar + mobile sheet + theme toggle
-│   │   ├── PublicNavbar.tsx     # Responsive navbar with mobile menu
-│   │   └── PublicFooter.tsx
-│   ├── providers/
-│   │   └── ThemeProvider.tsx    # next-themes wrapper
-│   └── ui/
-│       ├── badge.tsx
-│       ├── button.tsx
-│       ├── card.tsx
-│       ├── input.tsx
-│       ├── sheet.tsx
-│       ├── skeleton.tsx
-│       └── theme-toggle.tsx
-├── lib/
-│   ├── navigation.ts           # Centralized nav configs for all 4 roles
-│   ├── utils.ts                # cn() utility
-│   └── firebase/
-│       ├── client.ts
-│       └── admin.ts
-├── types/
-│   └── index.ts                # Shared TypeScript interfaces
-└── middleware.ts                # Auth route protection
-```
+
+### Structure Legend
+
+- `src/app` — Next.js App Router pages, route groups, and API route handlers.
+- `src/components` — Reusable UI and domain components (dashboard, doctor, notifications, appointment actions).
+- `src/lib` — Shared business logic and utilities (fees, policy rules, navigation, Firebase service layer).
+- `src/types` — Shared TypeScript domain types and interfaces.
+- `public` — Static assets served directly by Next.js.
+- `.vscode` — Workspace/editor recommendations.
+- Root config files (`next.config.ts`, `tsconfig.json`, `eslint.config.mjs`, `postcss.config.mjs`) — build, typing, linting, and styling configuration.
+
+## Data Model Highlights
+
+- Role collections: patients, doctors, receptionists, admins.
+- Appointment model includes payment, completion confirmations, reschedule history, ratings.
+- Availability supports recurring weekly or specific-date one-off blocks.
+- Clinic model supports map links for location.
 
 ## Local Development
 
-### Install
+### 1) Install
 
 ```bash
 npm install
 ```
 
-### Environment Variables
+### 2) Configure environment
 
-Copy the example and fill in your Firebase credentials:
+Create `.env.local` and provide:
 
-```bash
-cp .env.local.example .env.local
-```
+- `NEXT_PUBLIC_FIREBASE_*` (client config)
+- `FIREBASE_ADMIN_PROJECT_ID`
+- `FIREBASE_ADMIN_CLIENT_EMAIL`
+- `FIREBASE_ADMIN_PRIVATE_KEY`
 
-Required variables:
-- `NEXT_PUBLIC_FIREBASE_*` — Firebase client config (6 vars)
-- `FIREBASE_ADMIN_*` — Firebase Admin SDK (3 vars)
+In Firebase Console:
 
-**Firebase Authentication → Sign-in method:** enable **Phone** (for SMS) and **Email/Password** (for email accounts and verification links). Authorized domains must include your dev host (e.g. `localhost`).
+- Enable Authentication providers used by the app (Phone and Email/Password).
+- Create Firestore database.
 
-### Run
+### 3) Run
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open `http://localhost:3000`.
 
-## What's Next (Not Yet Implemented)
+## Current Gaps / Next Milestones
 
-- **Firestore integration** — Database schema designed (see `src/types/`), service layer and API routes needed
-- **Real doctor search** — Connect search page to Firestore with location/specialty/rating filters
-- **Slot-based booking** — Doctors set availability, patients book from real-time slots
-- **PMDC verification flow** — Doctor registration with certificate upload and admin approval
-- **Patient reviews** — Post-visit verified reviews with star ratings
-- **Real-time queue** — Firestore `onSnapshot` for live reception queue updates
-- **Notifications** — Email/SMS for appointment confirmations
-- **Role-based middleware** — Verify role claims (not just auth) for `/o/*` routes
+- PMDC verification workflow with document upload and admin approval.
+- Production-grade payment provider integration (current flow is simulated).
+- More complete admin analytics backed by aggregated live data.
+- End-to-end automated test suite (integration + E2E).
+- Additional hardening and policy enforcement tasks tracked in `AUDIT.md`.

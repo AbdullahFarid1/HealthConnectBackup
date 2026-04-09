@@ -90,7 +90,10 @@ export default function PatientDashboard() {
                   No appointments yet. Book your first one!
                 </p>
               ) : (
-                appointments.slice(0, 5).map((apt) => (
+                appointments
+                  .filter((a) => a.status !== "cancelled")
+                  .slice(0, 5)
+                  .map((apt) => (
                   <div
                     key={apt.id}
                     className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 px-4 py-3"

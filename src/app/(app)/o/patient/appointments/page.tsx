@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Appointment } from "@/types";
+import { AppointmentActions } from "@/components/appointments/AppointmentActions";
 
 const statusVariant = (s: string) =>
   s === "confirmed" || s === "pending"
@@ -15,22 +16,39 @@ const statusVariant = (s: string) =>
         ? "destructive"
         : "secondary";
 
+const STATUS_RANK: Record<string, number> = {
+  confirmed: 0,
+  pending: 1,
+  "in-progress": 2,
+  completed: 3,
+  cancelled: 4,
+};
+function sortAppointments(list: Appointment[]) {
+  return [...list].sort((a, b) => {
+    const r = (STATUS_RANK[a.status] ?? 99) - (STATUS_RANK[b.status] ?? 99);
+    if (r !== 0) return r;
+    return b.date.localeCompare(a.date);
+  });
+}
+
 export default function PatientAppointments() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/appointments");
-        if (res.ok) setAppointments(await res.json());
-      } catch {
-        /* empty */
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const reload = useCallback(async () => {
+    try {
+      const res = await fetch("/api/appointments");
+      if (res.ok) setAppointments(sortAppointments(await res.json()));
+    } catch {
+      /* empty */
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   return (
     <>
@@ -60,22 +78,39 @@ export default function PatientAppointments() {
               {appointments.map((apt) => (
                 <div
                   key={apt.id}
-                  className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 px-4 py-3"
+                  className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3"
                 >
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">
-                      {apt.doctorName}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {apt.type} &middot; {apt.date} &middot; {apt.timeSlot}
-                    </p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">
+                        {apt.doctorName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {apt.type} &middot; {apt.date} &middot; {apt.timeSlot}
+                      </p>
+                      {apt.clinicName && (
+                        <p className="text-[11px] text-muted-foreground">{apt.clinicName}</p>
+                      )}
+                      {apt.payment && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Total paid: PKR {apt.payment.total.toLocaleString()} ·{" "}
+                          <span className="capitalize">{apt.payment.status}</span>
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge
+                        variant={statusVariant(apt.status)}
+                        className="capitalize"
+                      >
+                        {apt.status}
+                      </Badge>
+                      {apt.doctorConfirmedCompleted && apt.status !== "completed" && (
+                        <span className="text-[10px] text-muted-foreground">Doctor confirmed</span>
+                      )}
+                    </div>
                   </div>
-                  <Badge
-                    variant={statusVariant(apt.status)}
-                    className="capitalize"
-                  >
-                    {apt.status}
-                  </Badge>
+                  <AppointmentActions appt={apt} role="patient" onChanged={reload} />
                 </div>
               ))}
             </div>

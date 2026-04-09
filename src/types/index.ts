@@ -50,10 +50,7 @@ export interface ClinicDoc {
   address: string;
   city: string;
   phone: string;
-  /** Optional GPS coordinates so patients can navigate via Google Maps. */
-  latitude?: number;
-  longitude?: number;
-  /** Optional Google Maps link (paste from Google Maps "Share" → "Copy link"). */
+  /** Google Maps link captured via the "Attach Location" picker. */
   mapUrl?: string;
   createdAt: string;
   updatedAt: string;
@@ -88,6 +85,25 @@ export type AppointmentStatus =
   | "completed"
   | "cancelled";
 
+/** Simulated escrow / payment lifecycle for an appointment. */
+export type PaymentStatus =
+  | "unpaid"
+  | "held"        // funds in escrow, appointment confirmed
+  | "released"    // paid out to doctor after dual confirmation
+  | "refunded";   // patient cancelled / refunded
+
+export interface AppointmentPayment {
+  consultationFee: number; // doctor's base fee (PKR)
+  platformFee: number;     // 2% of consultationFee
+  tax: number;             // 5% sales tax on consultationFee
+  total: number;           // consultationFee + platformFee + tax
+  status: PaymentStatus;
+  paidAt?: string;
+  refundedAt?: string;
+  releasedAt?: string;
+  refundAmount?: number;   // what the patient got back on cancellation
+}
+
 export interface Appointment {
   id: string;
   patientId: string;
@@ -103,6 +119,63 @@ export interface Appointment {
   notes: string;
   createdAt: string;
   updatedAt: string;
+
+  // ─── Payment / escrow (simulated) ────────────────────
+  payment?: AppointmentPayment;
+
+  /** Length of the slot in minutes — used to compute slot end time client-side. */
+  slotDuration?: SlotDuration;
+
+  // ─── Dual completion confirmation ────────────────────
+  doctorConfirmedCompleted?: boolean;
+  doctorConfirmedAt?: string;
+  patientConfirmedCompleted?: boolean;
+  patientConfirmedAt?: string;
+  completedAt?: string;
+  /** Set when the system auto-confirmed the missing side. */
+  autoConfirmedBy?: "doctor" | "patient" | "both";
+
+  // ─── Ratings & feedback (after completion) ───────────
+  doctorRating?: number;   // 1..5
+  platformRating?: number; // 1..5
+  feedback?: string;
+
+  // ─── Cancellation / reschedule audit ─────────────────
+  cancelReason?: string;
+  cancelledBy?: "patient" | "doctor";
+  rescheduleReason?: string;
+  rescheduledBy?: "patient" | "doctor";
+  /** Set when the doctor reschedules — patient must confirm or cancel. */
+  pendingPatientConfirmation?: boolean;
+  rescheduleProposedAt?: string;
+  rescheduleHistory?: Array<{
+    fromDate: string;
+    fromTimeSlot: string;
+    by: "patient" | "doctor";
+    reason: string;
+    at: string;
+  }>;
+}
+
+// ─── Notifications ────────────────────────────────────────
+export type NotificationType =
+  | "booked"
+  | "cancelled"
+  | "rescheduled"
+  | "completed"
+  | "auto-confirmed"
+  | "auto-cancelled";
+
+export interface NotificationDoc {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  appointmentId?: string;
+  link?: string;
+  read: boolean;
+  createdAt: string;
 }
 
 // ─── Medical Records ──────────────────────────────────────

@@ -8,6 +8,8 @@ import {
   ChevronLeft,
   Loader2,
   CheckCircle2,
+  Wallet,
+  ShieldCheck,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { UserProfileDoc, ClinicDoc } from "@/types";
+import { computeFees, formatPKR } from "@/lib/fees";
+import { PATIENT_POLICY_SUMMARY } from "@/lib/policy";
 
 export default function BookClinicPage() {
   const params = useParams<{ clinicSlug: string }>();
@@ -43,6 +47,10 @@ export default function BookClinicPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+
+  // Payment flow ("simulated escrow")
+  const [paymentStep, setPaymentStep] = useState<"idle" | "review" | "processing" | "held">("idle");
+  const [paymentMessage, setPaymentMessage] = useState("");
 
   // Fetch doctor + clinics + availability
   useEffect(() => {
@@ -120,7 +128,10 @@ export default function BookClinicPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   };
 
-  const handleSubmit = async () => {
+  const fees = computeFees(doctor?.consultationFee ?? 0);
+
+  // Step 1: validate inputs and open the payment review.
+  const handleOpenPayment = () => {
     setError("");
     if (!selectedClinicId) {
       setError("Please select a clinic.");
@@ -130,7 +141,6 @@ export default function BookClinicPage() {
       setError("Please select a date.");
       return;
     }
-    // Frontend validation: reject past dates
     if (date < getTodayLocal()) {
       setError("Cannot book appointments in the past. Please select a future date.");
       return;
@@ -139,8 +149,25 @@ export default function BookClinicPage() {
       setError("Please select a time slot.");
       return;
     }
+    if (!doctor?.consultationFee) {
+      setError("This doctor hasn't set a consultation fee yet. Please try a different doctor.");
+      return;
+    }
+    setPaymentStep("review");
+  };
 
+  // Step 2: simulate the payment + escrow hold, then submit booking.
+  const handleConfirmPayment = async () => {
+    setError("");
     setSubmitting(true);
+    setPaymentStep("processing");
+    setPaymentMessage(
+      `Processing payment of ${formatPKR(fees.total)}… (simulated). Funds will be held in escrow until your visit is confirmed.`
+    );
+
+    // Simulate a payment-gateway round trip.
+    await new Promise((r) => setTimeout(r, 1200));
+
     try {
       const res = await fetch("/api/appointments", {
         method: "POST",
@@ -151,6 +178,7 @@ export default function BookClinicPage() {
           timeSlot,
           type: "Consultation",
           notes,
+          paymentConfirmed: true,
         }),
         headers: { "Content-Type": "application/json" },
       });
@@ -159,15 +187,23 @@ export default function BookClinicPage() {
         const data = await res.json();
         if (res.status === 401) {
           setError("You must be logged in to book. Please sign in and try again.");
-          return;
+        } else {
+          setError(data.error ?? "Failed to book. Please try again.");
         }
-        setError(data.error ?? "Failed to book. Please try again.");
+        setPaymentStep("review");
         return;
       }
 
+      setPaymentStep("held");
+      setPaymentMessage(
+        `Payment held in escrow (simulated). Your appointment is confirmed. The doctor receives the consultation fee only after both of you confirm the visit was completed.`
+      );
+      // Brief pause so the user can read the message before we navigate to success.
+      await new Promise((r) => setTimeout(r, 800));
       setSuccess(true);
     } catch {
       setError("Network error. Please try again.");
+      setPaymentStep("review");
     } finally {
       setSubmitting(false);
     }
@@ -390,16 +426,21 @@ export default function BookClinicPage() {
             <Button
               className="mt-1 h-12 w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700"
               type="button"
-              onClick={handleSubmit}
+              onClick={handleOpenPayment}
               disabled={submitting || !doctor}
             >
-              {submitting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <CalendarCheck2 className="mr-2 h-4 w-4" />
-              )}
-              Request Booking
+              <CalendarCheck2 className="mr-2 h-4 w-4" />
+              Continue to Payment
             </Button>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+              <p className="font-semibold">Cancellation policy</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {PATIENT_POLICY_SUMMARY.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
 
             <p className="pt-1 text-center text-xs text-muted-foreground">
               You must be logged in to book an appointment.
@@ -407,6 +448,120 @@ export default function BookClinicPage() {
           </CardContent>
         </Card>
       </div>
+
+      {paymentStep !== "idle" && (
+        <PaymentReviewModal
+          fees={fees}
+          step={paymentStep}
+          message={paymentMessage}
+          error={error}
+          onCancel={() => {
+            if (paymentStep === "processing") return;
+            setPaymentStep("idle");
+            setPaymentMessage("");
+          }}
+          onConfirm={handleConfirmPayment}
+        />
+      )}
+    </div>
+  );
+}
+
+function PaymentReviewModal({
+  fees,
+  step,
+  message,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  fees: ReturnType<typeof computeFees>;
+  step: "idle" | "review" | "processing" | "held";
+  message: string;
+  error: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <Card className="w-full max-w-md overflow-hidden">
+        <div className="h-1.5 bg-gradient-to-r from-blue-600 to-teal-500" />
+        <CardContent className="space-y-4 p-6">
+          <div className="flex items-center gap-2">
+            <Wallet className="h-5 w-5 text-blue-600" />
+            <h3 className="text-base font-semibold text-foreground">Review & Pay</h3>
+          </div>
+
+          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/30 p-3 text-sm">
+            <Row label="Consultation fee" value={formatPKR(fees.consultationFee)} />
+            <Row label="Platform fee (2%)" value={formatPKR(fees.platformFee)} />
+            <Row label="Tax (5%)" value={formatPKR(fees.tax)} />
+            <div className="my-1 border-t border-border/60" />
+            <Row label="Total" value={formatPKR(fees.total)} bold />
+          </div>
+
+          <div className="rounded-xl border border-blue-300 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="mt-0.5 h-4 w-4" />
+              <span>
+                <strong>Escrow protection (simulated).</strong> Your payment is held safely
+                by HealthConnect until both you and the doctor confirm your visit was
+                completed. If you cancel within the policy window, you are refunded the
+                full amount minus the 2% platform fee.
+              </span>
+            </div>
+          </div>
+
+          {message && (
+            <div className="rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300">
+              {message}
+            </div>
+          )}
+          {error && (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              type="button"
+              className="flex-1 rounded-xl"
+              onClick={onCancel}
+              disabled={step === "processing"}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="flex-1 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+              onClick={onConfirm}
+              disabled={step === "processing" || step === "held"}
+            >
+              {step === "processing" || step === "held" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Wallet className="mr-2 h-4 w-4" />
+              )}
+              {step === "held" ? "Confirmed" : `Pay ${formatPKR(fees.total)}`}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Row({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className={bold ? "font-semibold text-foreground" : "text-muted-foreground"}>
+        {label}
+      </span>
+      <span className={bold ? "font-semibold text-foreground" : "text-foreground"}>
+        {value}
+      </span>
     </div>
   );
 }
