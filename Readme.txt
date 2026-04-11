@@ -568,3 +568,78 @@ o	The doctor's own notification on reschedule now reads "Please contact the pati
 o	The patient's notification clearly says the doctor rescheduled and they must confirm or cancel.
 All timezone math goes through the existing Asia/Karachi-based helpers (appointmentStart, appointmentEnd, todayInAppTz). Type-check passes clean.
 
+UPDATE:										       4/10/2026
+1. Patient cancel/reschedule policy — src/lib/policy.ts:93-129 Replaced the old "≥24h OR same-day 1h window" rules with the two-condition AND rule: must be within 1 hour of booking and at least 1 hour before the appointment. Still timezone-safe via appointmentStart (Asia/Karachi UTC+5). Updated PATIENT_POLICY_SUMMARY.
+2. Mandatory CNIC for doctors
+•	src/types/index.ts — added cnic?: string to UserProfileDoc.
+•	src/lib/utils.ts — normalizeCnic, isValidCnic (13 digits), formatCnic (XXXXX-XXXXXXX-X).
+•	src/app/api/users/route.ts — rejects doctor signup without a valid CNIC; stores normalized digits.
+•	src/app/api/users/me/route.ts — validates CNIC on profile updates.
+•	src/app/(auth)/register/page.tsx — doctor registration now requires CNIC (phone + email flows), with formatting hint and inputMode="numeric".
+•	src/app/(auth)/auth/login/page.tsx — forwards CNIC from pending sessionStorage to the profile-create call.
+•	src/app/(app)/o/doctor/profile/page.tsx — adds required CNIC field with inline validation; save is blocked until valid.
+3. Clinic location input — src/app/(app)/o/doctor/profile/page.tsx:611-672 Two clearly-labeled options: Option 1 — paste URL (text input) and Option 2 — Attach Location (button). Both write to the single mapUrl field, so using one overwrites the other — no duplicate storage. The helper text explicitly states both options do the same thing, and each interaction shows a message explaining the overwrite.
+4. Role-aware notifications
+•	src/app/api/appointments/route.ts — added withDoctorTitle and notifyAppointmentParties(appt, { message: (counterparty) => … }). Patients see Dr. <name>; doctors see <patient name>. Applied to book, cancel, complete (both paths), reschedule, patient-confirm-reschedule, reject-reschedule.
+•	src/lib/firebase/firestore.ts — same helper added for maintenance jobs (auto-cancel pending, auto-confirm reschedule, auto-complete, cancel-all-pending). Doctors no longer receive patient-phrased notifications.
+Type check (tsc --noEmit) passes clean.
+All tasks done. Summary of changes:
+Patient profile fields (src/types/index.ts, src/app/api/users/me/route.ts, src/app/(app)/o/patient/profile/page.tsx)
+•	Added age, dob, gender to UserProfileDoc with validation in the PUT /api/users/me handler (DOB must be valid + not future; age 0-120 integer; gender enum).
+•	Profile page now has DOB/age/gender inputs; age auto-derives from DOB.
+Booking card auto-fill (src/app/(public)/book/[clinicSlug]/page.tsx, src/app/api/appointments/route.ts)
+•	Booking page pre-fills name, phone, and age from patient profile (age derives from DOB if needed).
+•	Appointment now carries patientPhone and patientAge snapshotted server-side from the canonical profile.
+•	Doctor dashboard (src/app/(app)/o/doctor/page.tsx) shows the patient's phone + age on each appointment card.
+Doctor rating system (src/lib/firebase/firestore.ts)
+•	New reviews collection with deterministic doc ID ${doctorId}_${patientId} so each patient can have exactly one review per doctor.
+•	upsertReview runs in a Firestore transaction that simultaneously updates the review doc and the doctor's ratingSum / ratingCount / ratingAverage aggregate — avoids recomputation.
+•	hasCompletedAppointmentBetween gates who can review.
+Reviews API (src/app/api/reviews/route.ts)
+•	GET /api/reviews?doctorId=... returns reviews + aggregate (supports &mine=1 for the current patient's review).
+•	POST /api/reviews upserts (requires patient role + at least one completed appointment with the doctor).
+Rate flow (src/app/api/appointments/route.ts, src/components/appointments/AppointmentActions.tsx)
+•	The existing rate action now also upsertReviews through the same transactional path, so the canonical review and doctor aggregate always stay in sync.
+•	Patient can open the rate modal again on a completed appointment — the button becomes Edit Rating and is pre-filled with the existing review; the upsert overwrites the previous review.
+Average-rating display
+•	New reusable src/components/doctor/RatingStars.tsx supporting fractional stars.
+•	DoctorCard shows average stars + count (fallback "New" when none).
+•	Doctor detail page shows the average in the About card and a new Comments section listing each review with a Verified Patient badge.
+•	Doctor dashboard has a new "Average rating" card driven by the aggregate.
+
+UPDATE:										       4/11/2026
+
+Summary
+1. Rating UI Bug — src/components/doctor/RatingStars.tsx Rewrote to explicitly render exactly 5 stars (filled / half / empty) based on the rounded value, instead of relying on an absolute-positioned clip overlay that could desync layout-wise.
+2. Comments Privacy — src/app/api/reviews/route.ts + src/app/(public)/c/[clinicSlug]/page.tsx Server now strips patientName from the public reviews response. The card only shows the "Verified Patient" badge + rating.
+3. Rating Consistency (Critical) — src/lib/firebase/firestore.ts, src/app/api/appointments/route.ts, src/app/api/reviews/route.ts
+•	The canonical review doc was already keyed ${doctorId}_${patientId} (one per pair).
+•	Added propagateRatingToCompletedAppointments() — a batched update that rewrites every completed appointment between that patient/doctor with the latest rating + feedback.
+•	Called from both handleRate (appointments action) and the /api/reviews POST endpoint, so editing from either place overrides previous ratings everywhere. Removed the stale per-visit doctorRating write in handleRate — it's now always propagated.
+4. Doctor Details Auth/Routing — src/components/layout/PublicNavbar.tsx + src/app/(public)/c/[clinicSlug]/page.tsx
+•	PublicNavbar now calls /api/users/me and shows a "My Dashboard" button (role-aware path) when logged in instead of "Login / Get Started".
+•	Details page added a role-aware "Back to Dashboard" / "Back to Search" breadcrumb at the top.
+5. Booking Card Phone — src/app/(public)/book/[clinicSlug]/page.tsx Phone fetch hardened (cache: "no-store"), label now shows "(from your profile)" when auto-filled, and a hint nudges patients with an empty profile phone to set it.
+6. Patient Profile Picture + Email — src/app/(app)/o/patient/profile/page.tsx + src/app/api/users/me/route.ts Full "Attach Profile Picture" flow mirroring the doctor profile (file picker, MIME validation, simulated upload via FileReader, preview, remove). Added optional editable email field with regex validation on PUT, plus made phone editable so patients can fix missing numbers.
+7. My Doctors Section — src/app/(app)/o/patient/page.tsx New card on the patient dashboard that groups completed appointments by doctor and shows name, specialty (fetched from /api/doctors/[id]), visit count, current rating (from the propagated doctorRating), and View/Edit Rating buttons. Because of fix #3, the rating shown here matches the one on the doctor page and on every individual appointment.
+
+UPDATE:										       4/11/2026
+Full receptionist role system is implemented and typechecks cleanly. Summary of what's now in place:
+Phase 1 — Types & data layer (src/types/index.ts, src/lib/firebase/firestore.ts)
+•	ReceptionistPermissions, DoctorInviteState, multi-doctor fields on UserProfileDoc, checkInStatus/actionBy/actionHistory on Appointment, 4 new NotificationTypes.
+•	Helpers: findUserByEmail, linkExistingReceptionist, setReceptionistInviteStatus, activateReceptionist, updateReceptionistPermissions/Clinics, unlinkReceptionistFromDoctor, receptionistCan, listAppointmentsForReceptionist, updateAppointmentWithAudit, auto-running legacy migration.
+Phase 2 — APIs & doctor UI
+•	src/app/api/receptionists/route.ts: GET (list + email lookup), POST (create OR link mode), PUT (permissions/clinics), DELETE (unlink). Response is scoped to the current doctor's map entries.
+•	src/app/api/receptionists/me/invites/route.ts: receptionists accept/reject per doctor.
+•	src/app/(app)/o/doctor/profile/page.tsx: Create New / Link Existing tabs, email search, credentials popup, per-receptionist permission toggles, unlink.
+Phase 3 — Forced password reset (src/app/(auth)/auth/reset-password/page.tsx, src/app/api/auth/reset-password/route.ts)
+•	src/app/(app)/app/page.tsx:48 and src/app/(app)/o/reception/layout.tsx redirect receptionists with mustResetPassword to the reset page. API endpoint clears the flag and flips accepted → active via activateReceptionist.
+Phase 4 — Reception dashboard (overview, appointments, queue, profile under src/app/(app)/o/reception/)
+•	Overview shows pending invites (accept/reject), today's stats, and a check-in queue (waiting → arrived → in-progress → done → complete).
+•	Appointments page lists all linked-doctor appointments with search + doctor filter + cancel.
+•	Profile shows per-doctor permission grid (read-only on the receptionist side).
+Phase 5 — Appointments API (src/app/api/appointments/route.ts)
+•	GET now routes reception → listAppointmentsForReceptionist.
+•	PATCH accepts reception role, gates every action against receptionistCan(doctor, permission), adds mark-arrived/mark-in-progress/mark-done and a reception-only mark-complete shortcut, sends patient-arrived notifications.
+•	handleCancel and handleReschedule now write audit entries (actionBy + actionHistory) via updateAppointmentWithAudit.
+npx tsc --noEmit exits clean.
