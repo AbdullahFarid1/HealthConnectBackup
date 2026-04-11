@@ -5,13 +5,15 @@
  *   - May cancel/reschedule only if appointment start is ≥ 1 hour away.
  *
  * Patient:
- *   - Default: may cancel/reschedule if appointment start is ≥ 24 hours away.
- *   - Same-day exception: if the booking was made today AND the appointment is
- *     today, the patient may cancel/reschedule only within 1 hour of booking
- *     AND at least 1 hour before the appointment start time.
+ *   - May cancel/reschedule ONLY when BOTH conditions hold:
+ *       1. Within 1 hour of when the booking was made, AND
+ *       2. At least 1 hour before the appointment start time.
+ *     Rule (1) allows fixing accidental bookings; rule (2) prevents
+ *     last-minute cancellations.
  *
- * All times are evaluated against the server-provided "now". The
- * appointment time string format is "HH:MM AM/PM" (e.g. "09:30 AM").
+ * All times are evaluated against the server-provided "now" in the app
+ * timezone (Asia/Karachi, UTC+5 year-round). The appointment time string
+ * format is "HH:MM AM/PM" (e.g. "09:30 AM").
  */
 
 const APP_TIMEZONE = "Asia/Karachi";
@@ -73,7 +75,6 @@ export interface PolicyResult {
 }
 
 const HOUR = 60 * 60 * 1000;
-const DAY = 24 * HOUR;
 
 export function canDoctorModify(
   appointmentDate: string,
@@ -98,42 +99,33 @@ export function canPatientModify(
 ): PolicyResult {
   const start = appointmentStart(appointmentDate, appointmentTimeSlot);
   // Legacy appointments may not have a usable createdAt — fall back to "now"
-  // so the same-day exception check can't crash on Invalid Date.
+  // so the booking-window check can't crash on Invalid Date. Legacy rows are
+  // then effectively outside the 1-hour booking window (which is the safe
+  // default — blocks cancellation by policy).
   const parsedBookedAt = bookedAtISO ? new Date(bookedAtISO) : new Date(NaN);
-  const bookedAt = isValidDate(parsedBookedAt) ? parsedBookedAt : now;
-  const today = todayInAppTz(now);
-  const bookedToday = todayInAppTz(bookedAt) === today;
-  const sameDayAppt = appointmentDate === today;
+  const bookedAt = isValidDate(parsedBookedAt) ? parsedBookedAt : null;
 
-  // Same-day exception
-  if (bookedToday && sameDayAppt) {
-    const within1HourOfBooking = now.getTime() - bookedAt.getTime() <= HOUR;
-    const atLeast1HourBefore = start.getTime() - now.getTime() >= HOUR;
-    if (!within1HourOfBooking) {
-      return {
-        allowed: false,
-        reason:
-          "Same-day bookings can only be cancelled or rescheduled within 1 hour of booking.",
-      };
-    }
-    if (!atLeast1HourBefore) {
-      return {
-        allowed: false,
-        reason:
-          "You must cancel or reschedule at least 1 hour before the appointment time.",
-      };
-    }
-    return { allowed: true };
-  }
-
-  // Default rule: ≥ 1 day before
-  if (start.getTime() - now.getTime() < DAY) {
+  // Rule 1: must be within 1 hour of booking.
+  const within1HourOfBooking =
+    bookedAt !== null && now.getTime() - bookedAt.getTime() <= HOUR;
+  if (!within1HourOfBooking) {
     return {
       allowed: false,
       reason:
-        "Patients can only cancel or reschedule at least 1 day before the appointment.",
+        "Cancel or reschedule is only allowed within 1 hour of making the booking.",
     };
   }
+
+  // Rule 2: must be at least 1 hour before the appointment start.
+  const atLeast1HourBefore = start.getTime() - now.getTime() >= HOUR;
+  if (!atLeast1HourBefore) {
+    return {
+      allowed: false,
+      reason:
+        "You must cancel or reschedule at least 1 hour before the appointment time.",
+    };
+  }
+
   return { allowed: true };
 }
 
@@ -162,7 +154,7 @@ export function isWithinDoctorWindow(slot: string): boolean {
 
 /** Human-readable policy summary shown to patients during booking. */
 export const PATIENT_POLICY_SUMMARY = [
-  "You can cancel or reschedule up to 1 day before your appointment.",
-  "Same-day bookings: you have a 1-hour window after booking, and only if the appointment is still ≥ 1 hour away.",
+  "You can cancel or reschedule only within 1 hour of making the booking.",
+  "The appointment must also still be at least 1 hour away.",
   "Refunds = full amount minus the 2% platform fee, processed within 24 hours.",
 ];

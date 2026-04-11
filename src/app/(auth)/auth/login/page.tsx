@@ -154,6 +154,7 @@ export default function AuthLoginPage() {
                 ...(pending.pmdcRegistrationNo
                   ? { pmdcRegistrationNo: pending.pmdcRegistrationNo }
                   : {}),
+                ...(pending.cnic ? { cnic: pending.cnic } : {}),
               }),
               headers: { "Content-Type": "application/json" },
             });
@@ -212,6 +213,7 @@ export default function AuthLoginPage() {
                 ...(pending.pmdcRegistrationNo
                   ? { pmdcRegistrationNo: pending.pmdcRegistrationNo }
                   : {}),
+                ...(pending.cnic ? { cnic: pending.cnic } : {}),
               }),
               headers: { "Content-Type": "application/json" },
             });

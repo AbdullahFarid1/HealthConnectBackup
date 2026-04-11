@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { ArrowRight, HeartPulse, Menu, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowRight, HeartPulse, LayoutDashboard, Menu, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -12,13 +12,52 @@ type PublicNavbarProps = {
   className?: string;
 };
 
-const navLinks = [
-  { href: "/search", label: "Find a Clinic" },
-  { href: "/login", label: "Login" },
-];
+type MeState = { loading: boolean; role: string | null };
+
+function dashboardPathForRole(role: string | null): string | null {
+  if (role === "doctor" || role === "dentist") return "/o/doctor";
+  if (role === "patient") return "/o/patient";
+  if (role === "reception") return "/o/reception";
+  if (role === "admin") return "/o/admin";
+  return null;
+}
 
 export function PublicNavbar({ className }: PublicNavbarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [me, setMe] = useState<MeState>({ loading: true, role: null });
+
+  // Detect login state by calling /api/users/me. Keeps guest UI for guests
+  // and shows a Dashboard link for logged-in users so the public doctor
+  // details page doesn't push them back to Login / Get Started.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/users/me", { cache: "no-store" });
+        if (!res.ok) {
+          if (!cancelled) setMe({ loading: false, role: null });
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled) setMe({ loading: false, role: data.role ?? null });
+      } catch {
+        if (!cancelled) setMe({ loading: false, role: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loggedIn = !!me.role;
+  const dashboardPath = dashboardPathForRole(me.role);
+
+  const guestLinks = [
+    { href: "/search", label: "Find a Clinic" },
+    { href: "/auth/login", label: "Login" },
+  ];
+  const authedLinks = [{ href: "/search", label: "Find a Clinic" }];
+  const navLinks = loggedIn ? authedLinks : guestLinks;
 
   return (
     <nav
@@ -55,12 +94,23 @@ export function PublicNavbar({ className }: PublicNavbarProps) {
             </Link>
           ))}
           <ThemeToggle />
-          <Link href="/register">
-            <Button className="h-9 rounded-full bg-blue-600 px-5 text-sm font-semibold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
-              Get Started
-              <ArrowRight className="ml-1.5 h-4 w-4" />
-            </Button>
-          </Link>
+          {loggedIn && dashboardPath ? (
+            <Link href={dashboardPath}>
+              <Button className="h-9 rounded-full bg-blue-600 px-5 text-sm font-semibold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
+                <LayoutDashboard className="mr-1.5 h-4 w-4" />
+                My Dashboard
+              </Button>
+            </Link>
+          ) : (
+            !me.loading && (
+              <Link href="/register">
+                <Button className="h-9 rounded-full bg-blue-600 px-5 text-sm font-semibold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
+                  Get Started
+                  <ArrowRight className="ml-1.5 h-4 w-4" />
+                </Button>
+              </Link>
+            )
+          )}
         </div>
 
         {/* Mobile toggle */}
@@ -96,12 +146,21 @@ export function PublicNavbar({ className }: PublicNavbarProps) {
                 </Button>
               </Link>
             ))}
-            <Link href="/register" onClick={() => setMobileOpen(false)}>
-              <Button className="w-full rounded-full bg-blue-600 text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
-                Get Started
-                <ArrowRight className="ml-1.5 h-4 w-4" />
-              </Button>
-            </Link>
+            {loggedIn && dashboardPath ? (
+              <Link href={dashboardPath} onClick={() => setMobileOpen(false)}>
+                <Button className="w-full rounded-full bg-blue-600 text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
+                  <LayoutDashboard className="mr-1.5 h-4 w-4" />
+                  My Dashboard
+                </Button>
+              </Link>
+            ) : (
+              <Link href="/register" onClick={() => setMobileOpen(false)}>
+                <Button className="w-full rounded-full bg-blue-600 text-white shadow-md shadow-blue-500/20 hover:bg-blue-700">
+                  Get Started
+                  <ArrowRight className="ml-1.5 h-4 w-4" />
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       )}

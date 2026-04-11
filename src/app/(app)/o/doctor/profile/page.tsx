@@ -26,7 +26,10 @@ import type {
   ClinicDoc,
   AvailabilityDoc,
   SlotDuration,
+  ReceptionistPermissions,
 } from "@/types";
+import { DEFAULT_RECEPTIONIST_PERMISSIONS } from "@/types";
+import { formatCnic, isValidCnic, normalizeCnic } from "@/lib/utils";
 
 // ─── Constants ───────────────────────────────────────────────
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -45,6 +48,7 @@ export default function DoctorProfile() {
   // Profile fields
   const [name, setName] = useState("");
   const [pmdc, setPmdc] = useState("");
+  const [cnic, setCnic] = useState("");
   const [specialty, setSpecialty] = useState("");
   const [fee, setFee] = useState("");
   const [city, setCity] = useState("");
@@ -85,9 +89,28 @@ export default function DoctorProfile() {
 
   // Receptionists
   const [receptionists, setReceptionists] = useState<UserProfileDoc[]>([]);
-  const [recForm, setRecForm] = useState({ name: "", email: "", phone: "", assignedClinicIds: [] as string[] });
+  const [recMode, setRecMode] = useState<"create" | "link">("create");
+  const [recForm, setRecForm] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    clinicIds: [] as string[],
+    permissions: { ...DEFAULT_RECEPTIONIST_PERMISSIONS } as ReceptionistPermissions,
+  });
   const [recLoading, setRecLoading] = useState(false);
   const [recTempPassword, setRecTempPassword] = useState("");
+  const [recCreatedEmail, setRecCreatedEmail] = useState("");
+  const [recLookup, setRecLookup] = useState<
+    | null
+    | {
+        exists: boolean;
+        canLink?: boolean;
+        alreadyLinked?: boolean;
+        role?: string;
+        reason?: string;
+        profile?: { uid: string; name: string; email: string; phone: string };
+      }
+  >(null);
 
   // ─── Load all data ─────────────────────────────────────────
   const loadClinics = useCallback(async () => {
@@ -112,10 +135,15 @@ export default function DoctorProfile() {
     setAvailability(allAv);
   }, [clinics]);
 
+  const [myDoctorId, setMyDoctorId] = useState<string>("");
   const loadReceptionists = useCallback(async () => {
     try {
       const res = await fetch("/api/receptionists");
-      if (res.ok) setReceptionists(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setReceptionists(data.receptionists ?? []);
+        setMyDoctorId(data.doctorId ?? "");
+      }
     } catch { /* empty */ }
   }, []);
 
@@ -127,6 +155,7 @@ export default function DoctorProfile() {
           const data = await res.json();
           setName(data.name ?? "");
           setPmdc(data.pmdcRegistrationNo ?? "");
+          setCnic(data.cnic ? formatCnic(data.cnic) : "");
           setSpecialty(data.specialty ?? "");
           setFee(data.consultationFee?.toString() ?? "");
           setCity(data.city ?? "");
@@ -154,8 +183,12 @@ export default function DoctorProfile() {
 
   // ─── Profile Save ──────────────────────────────────────────
   const handleSaveProfile = async () => {
-    setSaving(true);
     setMessage("");
+    if (!isValidCnic(cnic)) {
+      setMessage("CNIC is required and must be 13 digits (format: XXXXX-XXXXXXX-X).");
+      return;
+    }
+    setSaving(true);
     try {
       const res = await fetch("/api/users/me", {
         method: "PUT",
@@ -166,10 +199,17 @@ export default function DoctorProfile() {
           city,
           bio,
           photoUrl,
+          cnic: normalizeCnic(cnic),
         }),
         headers: { "Content-Type": "application/json" },
       });
-      setMessage(res.ok ? "Profile updated!" : "Failed to save.");
+      if (res.ok) {
+        setCnic(formatCnic(cnic));
+        setMessage("Profile updated!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setMessage(data.error ?? "Failed to save.");
+      }
     } catch {
       setMessage("Network error.");
     } finally {
@@ -253,16 +293,17 @@ export default function DoctorProfile() {
 
   // ─── Clinic location picker (simulated Google Maps) ───────
   const handleAttachLocation = () => {
-    setLocationMessage("Opening Google Maps… (simulated). Pick your clinic and we'll capture the share link.");
+    setLocationMessage(
+      "Opening Google Maps… (simulated). Picking a location here will replace any URL pasted above."
+    );
     // Simulate a chosen location after a short delay so the user can read the message.
     setTimeout(() => {
       const fakeLat = (24 + Math.random() * 9).toFixed(6);
       const fakeLng = (67 + Math.random() * 8).toFixed(6);
       const url = `https://www.google.com/maps/search/?api=1&query=${fakeLat},${fakeLng}`;
+      // Overwrite any previously pasted URL — we only store one location.
       setClinicForm((f) => ({ ...f, mapUrl: url }));
-      setLocationMessage(
-        `Location captured (simulated). Stored map link: ${url}`
-      );
+      setLocationMessage(`Location captured (simulated). Stored map link: ${url}`);
     }, 900);
   };
 
@@ -357,38 +398,29 @@ export default function DoctorProfile() {
   // ─── Receptionist CRUD ─────────────────────────────────────
   const [recError, setRecError] = useState("");
 
-  const handleInviteReceptionist = async () => {
+  const handleLookupEmail = async () => {
     setRecError("");
-    setRecTempPassword("");
-
-    // Validate with user feedback instead of silent return
-    if (!recForm.name.trim()) {
-      setRecError("Please enter the receptionist's name.");
+    setRecLookup(null);
+    const email = recForm.email.trim();
+    if (!email) {
+      setRecError("Please enter an email to search.");
       return;
     }
-    if (!recForm.email.trim()) {
-      setRecError("Please enter the receptionist's email.");
-      return;
-    }
-    if (recForm.assignedClinicIds.length === 0) {
-      setRecError("Please assign the receptionist to at least one clinic.");
-      return;
-    }
-
     setRecLoading(true);
     try {
-      const res = await fetch("/api/receptionists", {
-        method: "POST",
-        body: JSON.stringify(recForm),
-        headers: { "Content-Type": "application/json" },
-      });
+      const res = await fetch(`/api/receptionists?email=${encodeURIComponent(email)}`);
       const data = await res.json();
       if (res.ok) {
-        setRecTempPassword(data.tempPassword);
-        setRecForm({ name: "", email: "", phone: "", assignedClinicIds: [] });
-        await loadReceptionists();
+        setRecLookup(data);
+        if (!data.exists) {
+          setRecError("No existing user with that email. Use the 'Create New' tab instead.");
+        } else if (!data.canLink) {
+          setRecError(data.reason ?? "This email cannot be linked.");
+        } else if (data.alreadyLinked) {
+          setRecError("This receptionist is already linked to you.");
+        }
       } else {
-        setRecError(data.error ?? "Failed to invite receptionist.");
+        setRecError(data.error ?? "Lookup failed.");
       }
     } catch {
       setRecError("Network error. Please try again.");
@@ -396,7 +428,70 @@ export default function DoctorProfile() {
     setRecLoading(false);
   };
 
-  const handleRemoveReceptionist = async (uid: string) => {
+  const handleSubmitReceptionist = async () => {
+    setRecError("");
+    setRecTempPassword("");
+    setRecCreatedEmail("");
+
+    if (!recForm.email.trim()) {
+      setRecError("Please enter the receptionist's email.");
+      return;
+    }
+    if (recMode === "create" && !recForm.name.trim()) {
+      setRecError("Please enter the receptionist's name.");
+      return;
+    }
+    if (recForm.clinicIds.length === 0) {
+      setRecError("Please assign the receptionist to at least one clinic.");
+      return;
+    }
+    if (recMode === "link") {
+      if (!recLookup?.canLink || recLookup.alreadyLinked) {
+        setRecError("Search for an existing receptionist first.");
+        return;
+      }
+    }
+
+    setRecLoading(true);
+    try {
+      const res = await fetch("/api/receptionists", {
+        method: "POST",
+        body: JSON.stringify({
+          mode: recMode,
+          name: recForm.name,
+          email: recForm.email,
+          phone: recForm.phone,
+          clinicIds: recForm.clinicIds,
+          permissions: recForm.permissions,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.tempPassword) {
+          setRecTempPassword(data.tempPassword);
+          setRecCreatedEmail(data.email ?? recForm.email);
+        }
+        setRecForm({
+          name: "",
+          email: "",
+          phone: "",
+          clinicIds: [],
+          permissions: { ...DEFAULT_RECEPTIONIST_PERMISSIONS },
+        });
+        setRecLookup(null);
+        await loadReceptionists();
+      } else {
+        setRecError(data.error ?? "Failed to add receptionist.");
+      }
+    } catch {
+      setRecError("Network error. Please try again.");
+    }
+    setRecLoading(false);
+  };
+
+  const handleUnlinkReceptionist = async (uid: string) => {
+    if (!confirm("Unlink this receptionist? Their account will remain so they can continue working for other doctors.")) return;
     setRecLoading(true);
     try {
       await fetch("/api/receptionists", {
@@ -409,13 +504,51 @@ export default function DoctorProfile() {
     setRecLoading(false);
   };
 
+  const handleTogglePermission = async (
+    r: UserProfileDoc,
+    key: keyof ReceptionistPermissions
+  ) => {
+    if (!myDoctorId) return;
+    const current =
+      r.doctorPermissions?.[myDoctorId] ?? { ...DEFAULT_RECEPTIONIST_PERMISSIONS };
+    const next: ReceptionistPermissions = { ...current, [key]: !current[key] };
+
+    setReceptionists((prev) =>
+      prev.map((x) =>
+        x.uid === r.uid
+          ? { ...x, doctorPermissions: { ...(x.doctorPermissions ?? {}), [myDoctorId]: next } }
+          : x
+      )
+    );
+
+    try {
+      await fetch("/api/receptionists", {
+        method: "PUT",
+        body: JSON.stringify({ uid: r.uid, permissions: next }),
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch { /* empty */ }
+  };
+
   const toggleClinicAssignment = (clinicId: string) => {
     setRecForm((f) => ({
       ...f,
-      assignedClinicIds: f.assignedClinicIds.includes(clinicId)
-        ? f.assignedClinicIds.filter((id) => id !== clinicId)
-        : [...f.assignedClinicIds, clinicId],
+      clinicIds: f.clinicIds.includes(clinicId)
+        ? f.clinicIds.filter((id) => id !== clinicId)
+        : [...f.clinicIds, clinicId],
     }));
+  };
+
+  // Helper: surface the permissions + invite state for THIS doctor (the
+  // session owner). Because the client never receives the doctor uid in a
+  // stable way, we pick the first entry — there's only one per profile from
+  // the perspective of the /api/receptionists list filtered by this doctor.
+  const pickMyState = (r: UserProfileDoc) => {
+    const inviteState = myDoctorId ? r.doctorInviteStatuses?.[myDoctorId] : undefined;
+    const myPerms: ReceptionistPermissions = myDoctorId
+      ? r.doctorPermissions?.[myDoctorId] ?? { ...DEFAULT_RECEPTIONIST_PERMISSIONS }
+      : { ...DEFAULT_RECEPTIONIST_PERMISSIONS };
+    return { inviteState, myPerms };
   };
 
   // ─── Render ────────────────────────────────────────────────
@@ -456,6 +589,27 @@ export default function DoctorProfile() {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">PMDC Registration No.</label>
               <Input value={pmdc} disabled placeholder="12345-P" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                CNIC <span className="text-destructive">*</span>
+                <span className="ml-1 font-normal text-muted-foreground">
+                  (required for PMDC verification)
+                </span>
+              </label>
+              <Input
+                value={cnic}
+                onChange={(e) => setCnic(e.target.value)}
+                placeholder="XXXXX-XXXXXXX-X"
+                inputMode="numeric"
+                maxLength={15}
+                aria-invalid={cnic.length > 0 && !isValidCnic(cnic)}
+              />
+              {cnic.length > 0 && !isValidCnic(cnic) && (
+                <p className="text-[11px] text-destructive">
+                  CNIC must be 13 digits (format: XXXXX-XXXXXXX-X).
+                </p>
+              )}
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Primary Specialty</label>
@@ -610,38 +764,63 @@ export default function DoctorProfile() {
 
           <div className="mt-3 space-y-2">
             <label className="text-xs font-semibold text-foreground">Clinic location</label>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="rounded-xl"
-                onClick={handleAttachLocation}
-              >
-                <MapPin className="mr-2 h-4 w-4" /> Attach Location
-              </Button>
-              {clinicForm.mapUrl && (
-                <a
-                  href={clinicForm.mapUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  Preview on Google Maps
-                </a>
-              )}
-              {clinicForm.mapUrl && (
-                <button
-                  type="button"
-                  onClick={() => setClinicForm((f) => ({ ...f, mapUrl: "" }))}
-                  className="text-xs text-muted-foreground underline"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
             <p className="text-[11px] text-muted-foreground">
-              Tapping <strong>Attach Location</strong> would normally open Google Maps so you can search for your clinic, use your current location, or pick a point manually. We capture the resulting share link.
+              Pick <strong>one</strong> of the two options below — both save the
+              same Google Maps link for your clinic. Using one option will
+              overwrite the other, so we only ever store a single location.
             </p>
+            <div className="space-y-2">
+              <Input
+                placeholder="Option 1 — paste a Google Maps URL (e.g. https://maps.app.goo.gl/...)"
+                value={clinicForm.mapUrl}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setClinicForm((f) => ({ ...f, mapUrl: value }));
+                  if (value) {
+                    setLocationMessage("Map URL pasted. This will replace any location captured via the button.");
+                  } else {
+                    setLocationMessage("");
+                  }
+                }}
+              />
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                OR
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={handleAttachLocation}
+                >
+                  <MapPin className="mr-2 h-4 w-4" /> Option 2 — Attach Location
+                </Button>
+                {clinicForm.mapUrl && (
+                  <a
+                    href={clinicForm.mapUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Preview on Google Maps
+                  </a>
+                )}
+                {clinicForm.mapUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setClinicForm((f) => ({ ...f, mapUrl: "" }));
+                      setLocationMessage("");
+                    }}
+                    className="text-xs text-muted-foreground underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
             {locationMessage && (
               <div className="rounded-xl border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
                 <div className="flex items-start justify-between gap-2">
@@ -867,41 +1046,107 @@ export default function DoctorProfile() {
 
       {/* Existing receptionists */}
       {receptionists.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {receptionists.map((r) => (
-            <Card key={r.uid}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">{r.name}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{r.email}</p>
-                    {r.phone && <p className="mt-0.5 text-xs text-muted-foreground">{r.phone}</p>}
-                    <Badge
-                      variant={r.inviteStatus === "joined" ? "success" : "warning"}
-                      className="mt-1 text-[10px]"
+        <div className="grid gap-3">
+          {receptionists.map((r) => {
+            const { inviteState, myPerms } = pickMyState(r);
+            const status = inviteState?.status ?? "invited";
+            const statusVariant =
+              status === "active" || status === "accepted"
+                ? "success"
+                : status === "rejected" || status === "expired"
+                  ? "destructive"
+                  : "warning";
+            return (
+              <Card key={r.uid}>
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">{r.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{r.email}</p>
+                      {r.phone && <p className="mt-0.5 text-xs text-muted-foreground">{r.phone}</p>}
+                      <Badge variant={statusVariant} className="mt-1 text-[10px] capitalize">
+                        {status}
+                      </Badge>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={() => handleUnlinkReceptionist(r.uid)}
+                      title="Unlink from your practice"
                     >
-                      {r.inviteStatus === "joined" ? "Joined" : "Invited"}
-                    </Badge>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    onClick={() => handleRemoveReceptionist(r.uid)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+
+                  {/* Permissions */}
+                  <div className="mt-3 rounded-xl border border-border/60 bg-muted/30 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Permissions
+                    </p>
+                    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                      {(
+                        [
+                          ["cancel", "Cancel appointments"],
+                          ["reschedule", "Reschedule appointments"],
+                          ["viewPatientDetails", "View patient details"],
+                          ["manageQueue", "Manage queue"],
+                          ["markCompletion", "Mark completion"],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-xs text-foreground">
+                          <input
+                            type="checkbox"
+                            checked={myPerms[key]}
+                            onChange={() => handleTogglePermission(r, key)}
+                            className="h-3.5 w-3.5 rounded border-input"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
-      {/* Invite receptionist form */}
+      {/* Add receptionist form */}
       <Card>
         <CardContent className="p-5">
-          <p className="mb-3 text-sm font-semibold text-foreground">Invite Receptionist</p>
+          <div className="mb-3 flex items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">Add Receptionist</p>
+          </div>
+          <div className="mb-3 inline-flex rounded-xl border border-border bg-muted/30 p-1">
+            <button
+              type="button"
+              onClick={() => {
+                setRecMode("create");
+                setRecLookup(null);
+                setRecError("");
+              }}
+              className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+                recMode === "create" ? "bg-background shadow-sm" : "text-muted-foreground"
+              }`}
+            >
+              Create New
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRecMode("link");
+                setRecError("");
+              }}
+              className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+                recMode === "link" ? "bg-background shadow-sm" : "text-muted-foreground"
+              }`}
+            >
+              Link Existing
+            </button>
+          </div>
+
           {recError && (
             <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {recError}
@@ -911,18 +1156,51 @@ export default function DoctorProfile() {
             <div className="mb-3 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm dark:border-green-500/30 dark:bg-green-500/10">
               <p className="font-semibold text-green-700 dark:text-green-400">Receptionist invited!</p>
               <p className="mt-1 text-green-600 dark:text-green-300">
+                Email: <code className="rounded bg-green-100 px-1.5 py-0.5 font-mono text-xs dark:bg-green-800">{recCreatedEmail}</code>
+              </p>
+              <p className="mt-1 text-green-600 dark:text-green-300">
                 Temporary password: <code className="rounded bg-green-100 px-1.5 py-0.5 font-mono text-xs dark:bg-green-800">{recTempPassword}</code>
               </p>
               <p className="mt-1 text-xs text-green-600/80 dark:text-green-400/80">
-                Share these credentials with the receptionist. They can log in at the login page using <strong>Email</strong> sign-in.
+                Share these credentials with the receptionist. They must reset their password on first login.
               </p>
             </div>
           )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Input placeholder="Name" value={recForm.name} onChange={(e) => setRecForm((f) => ({ ...f, name: e.target.value }))} />
-            <Input placeholder="Email" type="email" value={recForm.email} onChange={(e) => setRecForm((f) => ({ ...f, email: e.target.value }))} />
-            <Input placeholder="Phone (optional)" value={recForm.phone} onChange={(e) => setRecForm((f) => ({ ...f, phone: e.target.value }))} />
-          </div>
+
+          {recMode === "create" ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input placeholder="Name" value={recForm.name} onChange={(e) => setRecForm((f) => ({ ...f, name: e.target.value }))} />
+              <Input placeholder="Email" type="email" value={recForm.email} onChange={(e) => setRecForm((f) => ({ ...f, email: e.target.value }))} />
+              <Input placeholder="Phone (optional)" value={recForm.phone} onChange={(e) => setRecForm((f) => ({ ...f, phone: e.target.value }))} />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Receptionist's email"
+                  type="email"
+                  value={recForm.email}
+                  onChange={(e) => {
+                    setRecForm((f) => ({ ...f, email: e.target.value }));
+                    setRecLookup(null);
+                  }}
+                />
+                <Button variant="outline" onClick={handleLookupEmail} disabled={recLoading}>
+                  Search
+                </Button>
+              </div>
+              {recLookup?.exists && recLookup.canLink && recLookup.profile && !recLookup.alreadyLinked && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm dark:border-blue-500/30 dark:bg-blue-500/10">
+                  <p className="font-semibold text-blue-700 dark:text-blue-400">Found: {recLookup.profile.name}</p>
+                  <p className="text-xs text-blue-600 dark:text-blue-300">{recLookup.profile.email}</p>
+                  {recLookup.profile.phone && (
+                    <p className="text-xs text-blue-600 dark:text-blue-300">{recLookup.profile.phone}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {clinics.length > 0 && (
             <div className="mt-3">
               <label className="text-xs font-semibold text-foreground">Assign to clinics</label>
@@ -933,7 +1211,7 @@ export default function DoctorProfile() {
                     type="button"
                     onClick={() => toggleClinicAssignment(c.id)}
                     className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                      recForm.assignedClinicIds.includes(c.id)
+                      recForm.clinicIds.includes(c.id)
                         ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
                         : "border-border text-muted-foreground hover:border-foreground/30"
                     }`}
@@ -944,10 +1222,52 @@ export default function DoctorProfile() {
               </div>
             </div>
           )}
-          <Button className="mt-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700" onClick={handleInviteReceptionist} disabled={recLoading || clinics.length === 0}>
+
+          {/* Initial permissions (for new invites) */}
+          <div className="mt-3 rounded-xl border border-border/60 bg-muted/30 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Initial permissions
+            </p>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+              {(
+                [
+                  ["cancel", "Cancel appointments"],
+                  ["reschedule", "Reschedule appointments"],
+                  ["viewPatientDetails", "View patient details"],
+                  ["manageQueue", "Manage queue"],
+                  ["markCompletion", "Mark completion"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={recForm.permissions[key]}
+                    onChange={() =>
+                      setRecForm((f) => ({
+                        ...f,
+                        permissions: { ...f.permissions, [key]: !f.permissions[key] },
+                      }))
+                    }
+                    className="h-3.5 w-3.5 rounded border-input"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <Button
+            className="mt-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+            onClick={handleSubmitReceptionist}
+            disabled={recLoading || clinics.length === 0}
+          >
             {recLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            <UserPlus className="mr-1 h-4 w-4" /> Invite Receptionist
+            <UserPlus className="mr-1 h-4 w-4" />
+            {recMode === "create" ? "Create & Invite" : "Link & Invite"}
           </Button>
+          {clinics.length === 0 && (
+            <p className="mt-2 text-xs text-amber-600">Add a clinic first before adding a receptionist.</p>
+          )}
         </CardContent>
       </Card>
     </div>

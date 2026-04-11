@@ -20,7 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { cn, isValidCnic, normalizeCnic } from "@/lib/utils";
 
 type AccountType = "patient" | "doctor" | null;
 type VerifyBy = "phone" | "email";
@@ -66,6 +66,7 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [city, setCity] = useState("");
   const [pmdc, setPmdc] = useState("");
+  const [cnic, setCnic] = useState("");
   const [specialty, setSpecialty] = useState("");
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -90,6 +91,10 @@ export default function RegisterPage() {
         setFormError("Please enter your PMDC registration number.");
         return;
       }
+      if (!isValidCnic(cnic)) {
+        setFormError("Please enter a valid 13-digit CNIC (format: XXXXX-XXXXXXX-X).");
+        return;
+      }
       if (!specialty.trim()) {
         setFormError("Please enter your primary specialty.");
         return;
@@ -109,6 +114,7 @@ export default function RegisterPage() {
         ...(accountType === "doctor"
           ? {
               pmdcRegistrationNo: pmdc.trim(),
+              cnic: normalizeCnic(cnic),
               specialty: specialty.trim(),
             }
           : {}),
@@ -156,6 +162,10 @@ export default function RegisterPage() {
         setFormError("Please enter your PMDC registration number.");
         return;
       }
+      if (!isValidCnic(cnic)) {
+        setFormError("Please enter a valid 13-digit CNIC (format: XXXXX-XXXXXXX-X).");
+        return;
+      }
       if (!specialty.trim()) {
         setFormError("Please enter your primary specialty.");
         return;
@@ -175,6 +185,7 @@ export default function RegisterPage() {
         ...(accountType === "doctor"
           ? {
               pmdcRegistrationNo: pmdc.trim(),
+              cnic: normalizeCnic(cnic),
               specialty: specialty.trim(),
             }
           : {}),
@@ -206,7 +217,11 @@ export default function RegisterPage() {
           email: trimmedEmail,
           ...(city.trim() ? { city: city.trim() } : {}),
           ...(accountType === "doctor"
-            ? { specialty: specialty.trim(), pmdcRegistrationNo: pmdc.trim() }
+            ? {
+                specialty: specialty.trim(),
+                pmdcRegistrationNo: pmdc.trim(),
+                cnic: normalizeCnic(cnic),
+              }
             : {}),
         }),
         headers: { "Content-Type": "application/json" },
@@ -427,6 +442,21 @@ export default function RegisterPage() {
                       value={pmdc}
                       onChange={(e) => setPmdc(e.target.value)}
                       placeholder="e.g. 12345-P"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground">
+                      CNIC{" "}
+                      <span className="font-normal text-muted-foreground">
+                        (required for PMDC verification)
+                      </span>
+                    </label>
+                    <Input
+                      value={cnic}
+                      onChange={(e) => setCnic(e.target.value)}
+                      placeholder="XXXXX-XXXXXXX-X"
+                      inputMode="numeric"
+                      maxLength={15}
                     />
                   </div>
                   <div className="space-y-1.5">

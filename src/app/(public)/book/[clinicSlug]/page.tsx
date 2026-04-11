@@ -37,6 +37,9 @@ export default function BookClinicPage() {
   const [loggedInRole, setLoggedInRole] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  // True when the phone field was auto-populated from the logged-in profile.
+  const [phoneFromProfile, setPhoneFromProfile] = useState(false);
+  const [patientAge, setPatientAge] = useState<number | "">("");
   const [date, setDate] = useState("");
   const [timeSlot, setTimeSlot] = useState("");
   const [notes, setNotes] = useState("");
@@ -80,12 +83,28 @@ export default function BookClinicPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/users/me");
+        const res = await fetch("/api/users/me", { cache: "no-store" });
         if (res.ok) {
           const profile = await res.json();
           if (profile.name) setName(profile.name);
-          if (profile.phone) setPhone(profile.phone);
+          if (profile.phone) {
+            setPhone(profile.phone);
+            setPhoneFromProfile(true);
+          }
           if (profile.role) setLoggedInRole(profile.role);
+          // Age: prefer explicit age, else derive from dob.
+          if (typeof profile.age === "number") {
+            setPatientAge(profile.age);
+          } else if (typeof profile.dob === "string" && profile.dob) {
+            const d = new Date(`${profile.dob}T00:00:00`);
+            if (!Number.isNaN(d.getTime())) {
+              const now = new Date();
+              let years = now.getFullYear() - d.getFullYear();
+              const m = now.getMonth() - d.getMonth();
+              if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years -= 1;
+              if (years >= 0) setPatientAge(years);
+            }
+          }
         }
       } catch {
         // Not logged in — they'll fill manually
@@ -178,6 +197,9 @@ export default function BookClinicPage() {
           timeSlot,
           type: "Consultation",
           notes,
+          patientName: name,
+          patientPhone: phone,
+          patientAge: patientAge === "" ? undefined : Number(patientAge),
           paymentConfirmed: true,
         }),
         headers: { "Content-Type": "application/json" },
@@ -317,12 +339,42 @@ export default function BookClinicPage() {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">
                 Phone number
+                {phoneFromProfile && (
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    (from your profile)
+                  </span>
+                )}
               </label>
               <Input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="e.g. +923001234567"
                 autoComplete="tel"
+              />
+              {!phoneFromProfile && loggedInRole === "patient" && (
+                <p className="text-[11px] text-muted-foreground">
+                  Tip: set your phone number in your profile so it auto-fills next time.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                Age{" "}
+                <span className="font-normal text-muted-foreground">
+                  (optional)
+                </span>
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={120}
+                value={patientAge === "" ? "" : String(patientAge)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPatientAge(v === "" ? "" : Number(v));
+                }}
+                placeholder="e.g. 29"
               />
             </div>
 

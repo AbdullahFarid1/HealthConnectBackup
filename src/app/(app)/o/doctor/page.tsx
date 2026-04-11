@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, CalendarCheck2, CheckCircle2, Star, Users } from "lucide-react";
+import { AlertCircle, CalendarCheck2, CheckCircle2, Phone, Star, Users } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RatingStars } from "@/components/doctor/RatingStars";
 import type { Appointment } from "@/types";
 
 const statusVariant = (s: string) =>
@@ -46,6 +47,8 @@ export default function DoctorDashboard() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [completion, setCompletion] = useState<ProfileCompletion>({ percent: 0, missing: [] });
+  const [ratingAverage, setRatingAverage] = useState(0);
+  const [ratingCount, setRatingCount] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -63,7 +66,11 @@ export default function DoctorDashboard() {
         let hasClinics = false;
         let hasAvailability = false;
 
-        if (profileRes.ok) profile = await profileRes.json();
+        if (profileRes.ok) {
+          profile = await profileRes.json();
+          if (typeof profile.ratingAverage === "number") setRatingAverage(profile.ratingAverage);
+          if (typeof profile.ratingCount === "number") setRatingCount(profile.ratingCount);
+        }
         if (clinicsRes.ok) {
           const clinics = await clinicsRes.json();
           hasClinics = Array.isArray(clinics) && clinics.length > 0;
@@ -168,6 +175,27 @@ export default function DoctorDashboard() {
       </div>
 
       <Card>
+        <CardContent className="flex items-center justify-between gap-4 p-5">
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              Average rating
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {ratingCount > 0
+                ? `Based on ${ratingCount} verified patient review${ratingCount === 1 ? "" : "s"}.`
+                : "No reviews yet. Reviews come in after completed appointments."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <RatingStars value={ratingAverage} size={20} />
+            <span className="text-lg font-bold text-foreground">
+              {ratingCount > 0 ? ratingAverage.toFixed(1) : "—"}
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardContent className="p-5">
           <p className="text-sm font-semibold text-foreground">
             Today&apos;s Schedule
@@ -189,10 +217,20 @@ export default function DoctorDashboard() {
                   <div>
                     <p className="text-sm font-semibold text-foreground">
                       {apt.patientName}
+                      {typeof apt.patientAge === "number" && (
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          · {apt.patientAge} yrs
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {apt.timeSlot} &middot; {apt.type}
                     </p>
+                    {apt.patientPhone && (
+                      <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Phone className="h-3 w-3" /> {apt.patientPhone}
+                      </p>
+                    )}
                     {apt.notes && (
                       <p className="mt-0.5 text-xs text-muted-foreground italic">
                         Notes: {apt.notes}

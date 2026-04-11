@@ -7,8 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { UserProfileDoc } from "@/types";
+import { RatingStars } from "@/components/doctor/RatingStars";
 
 export function DoctorCard({ doc }: { doc: UserProfileDoc }) {
+  const ratingAverage = doc.ratingAverage ?? 0;
+  const ratingCount = doc.ratingCount ?? 0;
   return (
     <Card className="group hover:-translate-y-1 hover:shadow-lg hover:shadow-primary/10">
       <CardContent className="p-5">
@@ -47,9 +50,19 @@ export function DoctorCard({ doc }: { doc: UserProfileDoc }) {
               <MapPin className="h-3 w-3" /> {doc.city}
             </span>
           )}
-          <span className="flex items-center gap-1">
-            <Star className="h-3 w-3 text-amber-500" /> New
-          </span>
+          {ratingCount > 0 ? (
+            <span className="flex items-center gap-1">
+              <RatingStars value={ratingAverage} size={12} />
+              <span className="font-medium text-foreground">
+                {ratingAverage.toFixed(1)}
+              </span>
+              <span>({ratingCount})</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1">
+              <Star className="h-3 w-3 text-amber-500" /> New
+            </span>
+          )}
           {doc.consultationFee ? (
             <span className="font-semibold text-foreground">
               PKR {doc.consultationFee.toLocaleString()}

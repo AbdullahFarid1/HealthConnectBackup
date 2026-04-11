@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   Building2,
   CalendarCheck2,
+  ChevronLeft,
   Clock,
   Loader2,
   MapPin,
@@ -18,7 +19,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { UserProfileDoc, ClinicDoc, AvailabilityDoc } from "@/types";
+import { RatingStars } from "@/components/doctor/RatingStars";
+import type { UserProfileDoc, ClinicDoc, AvailabilityDoc, ReviewDoc } from "@/types";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -36,18 +38,62 @@ export default function DoctorDetailPage() {
   const [doctor, setDoctor] = useState<UserProfileDoc | null>(null);
   const [clinics, setClinics] = useState<ClinicDoc[]>([]);
   const [availability, setAvailability] = useState<AvailabilityDoc[]>([]);
+  const [reviews, setReviews] = useState<ReviewDoc[]>([]);
+  const [ratingAverage, setRatingAverage] = useState(0);
+  const [ratingCount, setRatingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [viewerRole, setViewerRole] = useState<string | null>(null);
+
+  const viewerDashboardPath =
+    viewerRole === "doctor" || viewerRole === "dentist"
+      ? "/o/doctor"
+      : viewerRole === "patient"
+        ? "/o/patient"
+        : viewerRole === "reception"
+          ? "/o/reception"
+          : viewerRole === "admin"
+            ? "/o/admin"
+            : null;
+
+  // Detect logged-in viewer so the page can offer "Back to Dashboard"
+  // instead of only "Back to Search".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/users/me", { cache: "no-store" });
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          setViewerRole(data.role ?? null);
+        }
+      } catch {
+        /* not logged in */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`/api/doctors/${doctorId}`);
+        const [res, reviewRes] = await Promise.all([
+          fetch(`/api/doctors/${doctorId}`),
+          fetch(`/api/reviews?doctorId=${doctorId}`),
+        ]);
         if (res.ok) {
           const data = await res.json();
           setDoctor(data.doctor);
           setClinics(data.clinics ?? []);
           setAvailability(data.availability ?? []);
+        }
+        if (reviewRes.ok) {
+          const data = await reviewRes.json();
+          setReviews(Array.isArray(data.reviews) ? data.reviews : []);
+          setRatingAverage(data.aggregate?.ratingAverage ?? 0);
+          setRatingCount(data.aggregate?.ratingCount ?? 0);
         }
       } catch {
         /* empty */
@@ -80,6 +126,17 @@ export default function DoctorDetailPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
+      {/* Back navigation */}
+      <div className="mb-6">
+        <Link
+          href={viewerDashboardPath ?? "/search"}
+          className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          {viewerDashboardPath ? "Back to Dashboard" : "Back to Search"}
+        </Link>
+      </div>
+
       {/* Header */}
       <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
         {/* Profile picture (clickable → lightbox) */}
@@ -170,10 +227,22 @@ export default function DoctorDetailPage() {
                       <MapPin className="h-3.5 w-3.5" /> {doctor.city}
                     </p>
                   )}
-                  <p className="flex items-center gap-2">
-                    <Star className="h-3.5 w-3.5 text-amber-500" /> New (no
-                    reviews yet)
-                  </p>
+                  {ratingCount > 0 ? (
+                    <p className="flex items-center gap-2">
+                      <RatingStars value={ratingAverage} size={14} />
+                      <span className="font-semibold text-foreground">
+                        {ratingAverage.toFixed(1)}
+                      </span>
+                      <span>
+                        ({ratingCount} review{ratingCount === 1 ? "" : "s"})
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="flex items-center gap-2">
+                      <Star className="h-3.5 w-3.5 text-amber-500" /> New (no
+                      reviews yet)
+                    </p>
+                  )}
                   {doctor.consultationFee && (
                     <p className="font-semibold text-foreground">
                       Consultation Fee: PKR{" "}
@@ -239,6 +308,61 @@ export default function DoctorDetailPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* Comments / Reviews */}
+          <Card>
+            <CardContent className="p-5">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Star className="h-4 w-4 text-amber-500" />
+                  <p className="text-sm font-semibold text-foreground">
+                    Comments ({ratingCount})
+                  </p>
+                </div>
+                {ratingCount > 0 && (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <RatingStars value={ratingAverage} size={12} />
+                    <span className="font-medium text-foreground">
+                      {ratingAverage.toFixed(1)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {reviews.length === 0 ? (
+                <p className="py-3 text-xs text-muted-foreground">
+                  No reviews yet. Only patients who have completed an
+                  appointment with this doctor can leave a review.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {reviews.map((r) => (
+                    <div
+                      key={r.id}
+                      className="rounded-xl border border-border/60 bg-muted/30 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <Badge
+                          variant="success"
+                          className="text-[10px] font-semibold"
+                        >
+                          Verified Patient
+                        </Badge>
+                        <RatingStars value={r.rating} size={12} />
+                      </div>
+                      {r.comment && (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {r.comment}
+                        </p>
+                      )}
+                      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-muted-foreground/80">
+                        {new Date(r.updatedAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* Book CTA */}

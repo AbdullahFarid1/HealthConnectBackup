@@ -3,6 +3,7 @@ import { admin } from "@/lib/firebase/admin";
 import { createUserProfile } from "@/lib/firebase/firestore";
 import type { UserRole, UserProfileDoc } from "@/types";
 import { USER_ROLES } from "@/types";
+import { isValidCnic, normalizeCnic } from "@/lib/utils";
 
 /**
  * POST /api/users
@@ -34,6 +35,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
+    // Doctors must provide a valid Pakistani CNIC (13 digits) for PMDC verification.
+    if (role === USER_ROLES.DOCTOR) {
+      if (!body.cnic || !isValidCnic(body.cnic)) {
+        return NextResponse.json(
+          { error: "A valid 13-digit CNIC is required for doctor accounts." },
+          { status: 400 }
+        );
+      }
+    }
+
     const now = new Date().toISOString();
     const profile: UserProfileDoc = {
       uid,
@@ -46,6 +57,7 @@ export async function POST(req: NextRequest) {
       ...(body.pmdcRegistrationNo
         ? { pmdcRegistrationNo: body.pmdcRegistrationNo }
         : {}),
+      ...(body.cnic ? { cnic: normalizeCnic(body.cnic) } : {}),
       ...(body.consultationFee
         ? { consultationFee: Number(body.consultationFee) }
         : {}),
