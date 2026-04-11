@@ -9,6 +9,10 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock,
+  UserPlus,
+  UserCheck,
+  UserX,
+  DoorOpen,
 } from "lucide-react";
 import type { NotificationDoc, NotificationType } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -20,6 +24,10 @@ const ICONS: Record<NotificationType, typeof Bell> = {
   completed: CheckCircle2,
   "auto-confirmed": CheckCircle2,
   "auto-cancelled": Clock,
+  "invite-received": UserPlus,
+  "invite-accepted": UserCheck,
+  "invite-rejected": UserX,
+  "patient-arrived": DoorOpen,
 };
 
 const COLORS: Record<NotificationType, string> = {
@@ -29,6 +37,10 @@ const COLORS: Record<NotificationType, string> = {
   completed: "text-green-600",
   "auto-confirmed": "text-green-600",
   "auto-cancelled": "text-muted-foreground",
+  "invite-received": "text-blue-600",
+  "invite-accepted": "text-green-600",
+  "invite-rejected": "text-destructive",
+  "patient-arrived": "text-teal-600",
 };
 
 function timeAgo(iso: string): string {

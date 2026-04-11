@@ -44,6 +44,21 @@ export default function AppPortal() {
           normalizeRole(token.claims.userRole) ??
           normalizeRole(token.claims.type);
 
+        // Receptionists with a pending forced password reset get routed to the
+        // reset page instead of their dashboard.
+        if (role === "reception") {
+          try {
+            const res = await fetch("/api/users/me");
+            if (res.ok) {
+              const data = await res.json();
+              if (data.mustResetPassword) {
+                router.replace("/auth/reset-password");
+                return;
+              }
+            }
+          } catch { /* empty */ }
+        }
+
         if (role === "patient") router.replace("/o/patient");
         else if (role === "doctor" || role === "dentist") router.replace("/o/doctor");
         else if (role === "reception") router.replace("/o/reception");

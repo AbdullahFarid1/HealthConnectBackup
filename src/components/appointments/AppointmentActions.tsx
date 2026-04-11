@@ -266,9 +266,21 @@ export function AppointmentActions({
   };
 
   const isFinal = appt.status === "cancelled" || appt.status === "completed";
-  const showRate =
-    role === "patient" && appt.status === "completed" && appt.doctorRating === undefined;
+  // Patients can rate after the appointment is completed and can also edit
+  // their previous rating at any time (reviews are keyed per patient+doctor,
+  // so editing overwrites the previous review).
+  const showRate = role === "patient" && appt.status === "completed";
+  const hasExistingRating = appt.doctorRating !== undefined;
   const showReceipt = appt.status === "completed";
+
+  // Pre-fill rating modal from the existing rating when the patient reopens it.
+  useEffect(() => {
+    if (rateOpen && hasExistingRating) {
+      setDoctorRating(appt.doctorRating ?? 5);
+      setPlatformRating(appt.platformRating ?? 5);
+      setFeedback(appt.feedback ?? "");
+    }
+  }, [rateOpen, hasExistingRating, appt.doctorRating, appt.platformRating, appt.feedback]);
 
   // Mark Complete is only visible after the slot END time has passed.
   const slotEnded = useMemo(() => {
@@ -412,7 +424,8 @@ export function AppointmentActions({
             className="h-8 rounded-lg bg-amber-500 text-white hover:bg-amber-600"
             onClick={() => setRateOpen(true)}
           >
-            <Star className="mr-1 h-3.5 w-3.5" /> Rate
+            <Star className="mr-1 h-3.5 w-3.5" />{" "}
+            {hasExistingRating ? "Edit Rating" : "Rate"}
           </Button>
         )}
         {showReceipt && (

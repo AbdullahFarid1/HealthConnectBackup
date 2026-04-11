@@ -9,8 +9,15 @@ import type {
   UserRole,
   NotificationDoc,
   NotificationType,
+  ReviewDoc,
+  ReceptionistPermissions,
+  DoctorInviteState,
 } from "@/types";
-import { USER_ROLES } from "@/types";
+import {
+  USER_ROLES,
+  DEFAULT_RECEPTIONIST_PERMISSIONS,
+  INVITE_EXPIRY_MS,
+} from "@/types";
 import {
   appointmentEnd as _appointmentEnd,
   appointmentStart as _appointmentStart,
@@ -48,6 +55,7 @@ const appointmentsCol = () => firestore.collection("appointments");
 const clinicsCol = () => firestore.collection("clinics");
 const availabilityCol = () => firestore.collection("availability");
 const notificationsCol = () => firestore.collection("notifications");
+const reviewsCol = () => firestore.collection("reviews");
 
 // ─── Date helpers ─────────────────────────────────────────
 // HealthConnect operates in Pakistan (Asia/Karachi, UTC+5, no DST). All
@@ -457,6 +465,87 @@ export async function updateAppointment(
 }
 
 /**
+ * Partial update with an audit entry appended. Pass the acting user so we can
+ * record both the lightweight `actionBy` pointer and the full `actionHistory`
+ * trail. Safe to call from any role (patient, doctor, reception).
+ */
+export async function updateAppointmentWithAudit(
+  id: string,
+  data: Partial<Appointment>,
+  audit: {
+    action: string;
+    uid: string;
+    role: UserRole;
+    note?: string;
+  }
+) {
+  const ref = appointmentsCol().doc(id);
+  const nowISO = new Date().toISOString();
+  const entry = {
+    action: audit.action,
+    uid: audit.uid,
+    role: audit.role,
+    at: nowISO,
+    ...(audit.note ? { note: audit.note } : {}),
+  };
+  await ref.update(
+    clean({
+      ...data,
+      actionBy: { uid: audit.uid, role: audit.role, at: nowISO },
+      actionHistory: admin.firestore.FieldValue.arrayUnion(entry) as unknown as Appointment["actionHistory"],
+      updatedAt: nowISO,
+    })
+  );
+}
+
+/**
+ * Aggregate appointments for every doctor a receptionist is actively linked
+ * to. Only active invites (accepted or active) contribute. Results are
+ * deduped by id and sorted newest-first.
+ */
+export async function listAppointmentsForReceptionist(
+  receptionistUid: string
+): Promise<Appointment[]> {
+  const profile = await getReceptionistProfile(receptionistUid);
+  if (!profile) return [];
+  const statuses = profile.doctorInviteStatuses ?? {};
+  const doctorIds = Object.entries(statuses)
+    .filter(([, s]) => s.status === "accepted" || s.status === "active")
+    .map(([id]) => id);
+  if (doctorIds.length === 0) return [];
+
+  const all: Appointment[] = [];
+  for (const doctorId of doctorIds) {
+    const docs = await listAppointmentsByDoctor(doctorId);
+    all.push(...docs);
+  }
+  // Dedupe by id in case of any overlaps.
+  const byId = new Map<string, Appointment>();
+  for (const a of all) byId.set(a.id, a);
+  return Array.from(byId.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * True if the given receptionist has an active link to the given doctor AND
+ * has the specified permission enabled. Used by API routes to gate writes.
+ */
+export async function receptionistCan(
+  receptionistUid: string,
+  doctorId: string,
+  permission: keyof ReceptionistPermissions
+): Promise<boolean> {
+  const profile = await getReceptionistProfile(receptionistUid);
+  if (!profile) return false;
+  const state = profile.doctorInviteStatuses?.[doctorId];
+  if (!state || (state.status !== "accepted" && state.status !== "active")) {
+    return false;
+  }
+  const perms = profile.doctorPermissions?.[doctorId];
+  if (!perms) return false;
+  return Boolean(perms[permission]);
+}
+
+/**
  * Atomically reschedule an appointment to a new (date, timeSlot) by creating
  * a new deterministic-ID doc and deleting the old one. Throws
  * SlotAlreadyBookedError if the new slot is taken.
@@ -547,28 +636,108 @@ export async function listAppointmentsByDoctorForDate(
   return snap.docs.map((d) => d.data() as Appointment);
 }
 
-// ─── Receptionists (managed by doctor) ────────────────────
+// ─── Receptionists (multi-doctor, permission-based) ───────
+
+/**
+ * Look up any existing user by email across all role collections. Returns
+ * the first match's role and uid so the caller can decide whether to link
+ * or block (we never allow a non-receptionist user to be turned into one).
+ */
+export async function findUserByEmail(
+  email: string
+): Promise<{ uid: string; role: UserRole; profile: UserProfileDoc } | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+  const cols: Array<{ col: FirebaseFirestore.CollectionReference; role: UserRole }> = [
+    { col: receptionistsCol(), role: USER_ROLES.RECEPTION },
+    { col: doctorsCol(), role: USER_ROLES.DOCTOR },
+    { col: patientsCol(), role: USER_ROLES.PATIENT },
+    { col: adminsCol(), role: USER_ROLES.ADMIN },
+  ];
+  for (const { col, role } of cols) {
+    const snap = await col.where("email", "==", normalized).limit(1).get();
+    if (!snap.empty) {
+      const profile = snap.docs[0].data() as UserProfileDoc;
+      return { uid: profile.uid, role, profile };
+    }
+  }
+  // Case-insensitive fallback: older docs may have stored a mixed-case email.
+  // We skip this in the hot path (equality above is much faster) but fall
+  // back to linear scan on miss so legacy data still matches.
+  for (const { col, role } of cols) {
+    const snap = await col.get();
+    for (const d of snap.docs) {
+      const prof = d.data() as UserProfileDoc;
+      if ((prof.email ?? "").trim().toLowerCase() === normalized) {
+        return { uid: prof.uid, role, profile: prof };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * List every receptionist linked to this doctor. Expired invites are
+ * auto-materialized on read so the UI always reflects current state.
+ */
 export async function listReceptionistsByDoctor(
   doctorId: string
 ): Promise<UserProfileDoc[]> {
   const snap = await receptionistsCol()
     .where("role", "==", USER_ROLES.RECEPTION)
-    .where("invitedByDoctorId", "==", doctorId)
+    .where("invitedByDoctorIds", "array-contains", doctorId)
     .get();
-  return snap.docs.map((d) => d.data() as UserProfileDoc);
+  const docs = snap.docs.map((d) => d.data() as UserProfileDoc);
+  // Lazy-expire stale invites so the UI shows them accurately.
+  const now = Date.now();
+  for (const r of docs) {
+    const state = r.doctorInviteStatuses?.[doctorId];
+    if (state && state.status === "invited") {
+      const expiresAt = Date.parse(state.expiresAt);
+      if (!Number.isNaN(expiresAt) && expiresAt <= now) {
+        await receptionistsCol().doc(r.uid).update({
+          [`doctorInviteStatuses.${doctorId}.status`]: "expired",
+          updatedAt: new Date().toISOString(),
+        });
+        state.status = "expired";
+      }
+    }
+  }
+  return docs;
 }
 
+/** Default permissions: everything enabled. */
+export function defaultReceptionistPermissions(): ReceptionistPermissions {
+  return { ...DEFAULT_RECEPTIONIST_PERMISSIONS };
+}
+
+/**
+ * Create a brand-new receptionist account (Firebase Auth + Firestore profile)
+ * linked to the inviting doctor. Returns the temporary password so the doctor
+ * can share it once — storage-side we only persist `mustResetPassword: true`.
+ */
 export async function createReceptionistInvite(data: {
   name: string;
   email: string;
   phone: string;
-  assignedClinicIds: string[];
+  clinicIds: string[];
   doctorId: string;
-}): Promise<string> {
-  // Create Firebase Auth user with a generated password
+  permissions?: ReceptionistPermissions;
+}): Promise<{ uid: string; tempPassword: string; profile: UserProfileDoc }> {
+  const normalizedEmail = data.email.trim().toLowerCase();
+  // Guard: if a user with this email already exists in ANY collection,
+  // we should not silently create a new account. The caller (API layer)
+  // decides whether to link existing or error out.
+  const existing = await findUserByEmail(normalizedEmail);
+  if (existing) {
+    throw new Error(
+      `A user with email ${normalizedEmail} already exists. Use "Link existing" instead.`
+    );
+  }
+
   const tempPassword = Math.random().toString(36).slice(-10) + "A1!";
   const userRecord = await admin.auth().createUser({
-    email: data.email,
+    email: normalizedEmail,
     password: tempPassword,
     displayName: data.name,
     phoneNumber: data.phone.startsWith("+") ? data.phone : undefined,
@@ -576,32 +745,299 @@ export async function createReceptionistInvite(data: {
 
   await admin.auth().setCustomUserClaims(userRecord.uid, { role: USER_ROLES.RECEPTION });
 
-  const now = new Date().toISOString();
+  const now = new Date();
+  const nowISO = now.toISOString();
+  const expiresAtISO = new Date(now.getTime() + INVITE_EXPIRY_MS).toISOString();
+
+  const inviteState: DoctorInviteState = {
+    status: "invited",
+    invitedAt: nowISO,
+    expiresAt: expiresAtISO,
+    clinicIds: data.clinicIds,
+  };
+
   const profile: UserProfileDoc = {
     uid: userRecord.uid,
     name: data.name,
-    email: data.email,
+    email: normalizedEmail,
     phone: data.phone,
     role: USER_ROLES.RECEPTION,
-    assignedClinicIds: data.assignedClinicIds,
-    invitedByDoctorId: data.doctorId,
-    inviteStatus: "invited",
-    createdAt: now,
-    updatedAt: now,
+    invitedByDoctorIds: [data.doctorId],
+    doctorInviteStatuses: { [data.doctorId]: inviteState },
+    doctorPermissions: {
+      [data.doctorId]: data.permissions ?? defaultReceptionistPermissions(),
+    },
+    mustResetPassword: true,
+    createdAt: nowISO,
+    updatedAt: nowISO,
   };
 
   await receptionistsCol().doc(userRecord.uid).set(clean(profile));
 
-  // Return the temp password so the doctor can share it
-  return tempPassword;
+  return { uid: userRecord.uid, tempPassword, profile };
 }
 
-export async function removeReceptionist(uid: string) {
-  await receptionistsCol().doc(uid).delete();
+/**
+ * Link an existing receptionist to a new doctor. Fails if the target user
+ * exists but has a non-reception role (no multi-role users allowed).
+ * Returns the updated profile.
+ */
+export async function linkExistingReceptionist(data: {
+  email: string;
+  clinicIds: string[];
+  doctorId: string;
+  permissions?: ReceptionistPermissions;
+}): Promise<UserProfileDoc> {
+  const existing = await findUserByEmail(data.email);
+  if (!existing) {
+    throw new Error("No user found with that email.");
+  }
+  if (existing.role !== USER_ROLES.RECEPTION) {
+    throw new Error(
+      `This email belongs to a ${existing.role} account. Users cannot hold multiple roles.`
+    );
+  }
+
+  const profile = existing.profile;
+  // Already linked? Refresh the invite to re-send.
+  const doctorIds = new Set(profile.invitedByDoctorIds ?? []);
+  doctorIds.add(data.doctorId);
+
+  const now = new Date();
+  const nowISO = now.toISOString();
+  const expiresAtISO = new Date(now.getTime() + INVITE_EXPIRY_MS).toISOString();
+
+  const prevState = profile.doctorInviteStatuses?.[data.doctorId];
+  // If the receptionist has already accepted/is active for this doctor,
+  // linking again is a no-op (just return the current profile).
+  if (prevState && (prevState.status === "accepted" || prevState.status === "active")) {
+    return profile;
+  }
+
+  const newState: DoctorInviteState = {
+    status: "invited",
+    invitedAt: nowISO,
+    expiresAt: expiresAtISO,
+    clinicIds: data.clinicIds,
+  };
+
+  const permissions = { ...(profile.doctorPermissions ?? {}) };
+  permissions[data.doctorId] =
+    data.permissions ?? permissions[data.doctorId] ?? defaultReceptionistPermissions();
+
+  const updated: Partial<UserProfileDoc> = {
+    invitedByDoctorIds: Array.from(doctorIds),
+    doctorInviteStatuses: {
+      ...(profile.doctorInviteStatuses ?? {}),
+      [data.doctorId]: newState,
+    },
+    doctorPermissions: permissions,
+    updatedAt: nowISO,
+  };
+  await receptionistsCol().doc(profile.uid).update(clean(updated));
+  return { ...profile, ...updated };
+}
+
+/** Set a receptionist's status for a specific doctor. Used by accept/reject. */
+export async function setReceptionistInviteStatus(
+  receptionistUid: string,
+  doctorId: string,
+  status: "accepted" | "active" | "rejected"
+): Promise<UserProfileDoc> {
+  const ref = receptionistsCol().doc(receptionistUid);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("Receptionist not found");
+  const profile = snap.data() as UserProfileDoc;
+  const state = profile.doctorInviteStatuses?.[doctorId];
+  if (!state) throw new Error("No invite from that doctor.");
+
+  // State transitions:
+  //   invited  → accepted | rejected
+  //   accepted → active (set implicitly after first successful login)
+  //   active   → (terminal for this endpoint)
+  if (status === "rejected" && state.status !== "invited") {
+    throw new Error("Only pending invites can be rejected.");
+  }
+  if (status === "accepted" && state.status !== "invited") {
+    throw new Error("Only pending invites can be accepted.");
+  }
+
+  const nowISO = new Date().toISOString();
+  const nextState: DoctorInviteState = { ...state, status };
+  if (status === "accepted") nextState.acceptedAt = nowISO;
+  if (status === "rejected") nextState.rejectedAt = nowISO;
+
+  const nextStatuses = {
+    ...(profile.doctorInviteStatuses ?? {}),
+    [doctorId]: nextState,
+  };
+
+  await ref.update(
+    clean({
+      doctorInviteStatuses: nextStatuses,
+      updatedAt: nowISO,
+    })
+  );
+  return { ...profile, doctorInviteStatuses: nextStatuses, updatedAt: nowISO };
+}
+
+/**
+ * Transition every accepted invite for this receptionist to "active".
+ * Called after the receptionist completes their forced password reset — this
+ * marks them as fully onboarded.
+ */
+export async function activateReceptionist(
+  receptionistUid: string
+): Promise<void> {
+  const ref = receptionistsCol().doc(receptionistUid);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const profile = snap.data() as UserProfileDoc;
+  const statuses = { ...(profile.doctorInviteStatuses ?? {}) };
+  let changed = false;
+  for (const [doctorId, state] of Object.entries(statuses)) {
+    if (state.status === "accepted") {
+      statuses[doctorId] = { ...state, status: "active" };
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  await ref.update({
+    doctorInviteStatuses: statuses,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/** Update one doctor's permissions map for a receptionist. */
+export async function updateReceptionistPermissions(
+  receptionistUid: string,
+  doctorId: string,
+  permissions: ReceptionistPermissions
+): Promise<void> {
+  await receptionistsCol()
+    .doc(receptionistUid)
+    .update({
+      [`doctorPermissions.${doctorId}`]: permissions,
+      updatedAt: new Date().toISOString(),
+    });
+}
+
+/** Replace the clinic assignment list for this receptionist/doctor pair. */
+export async function updateReceptionistClinics(
+  receptionistUid: string,
+  doctorId: string,
+  clinicIds: string[]
+): Promise<void> {
+  await receptionistsCol()
+    .doc(receptionistUid)
+    .update({
+      [`doctorInviteStatuses.${doctorId}.clinicIds`]: clinicIds,
+      updatedAt: new Date().toISOString(),
+    });
+}
+
+/**
+ * Remove this receptionist's association with one doctor (audit-safe
+ * unlink). The Firebase Auth account and profile are preserved so the
+ * receptionist can still log in and work for any other doctors.
+ */
+export async function unlinkReceptionistFromDoctor(
+  receptionistUid: string,
+  doctorId: string
+): Promise<void> {
+  const ref = receptionistsCol().doc(receptionistUid);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const profile = snap.data() as UserProfileDoc;
+
+  const doctorIds = (profile.invitedByDoctorIds ?? []).filter((id) => id !== doctorId);
+  const statuses = { ...(profile.doctorInviteStatuses ?? {}) };
+  delete statuses[doctorId];
+  const perms = { ...(profile.doctorPermissions ?? {}) };
+  delete perms[doctorId];
+
+  await ref.update(
+    clean({
+      invitedByDoctorIds: doctorIds,
+      doctorInviteStatuses: statuses,
+      doctorPermissions: perms,
+      updatedAt: new Date().toISOString(),
+    })
+  );
+}
+
+/** Get the single receptionist doc — used by the /me endpoint. */
+export async function getReceptionistProfile(
+  uid: string
+): Promise<UserProfileDoc | null> {
+  const snap = await receptionistsCol().doc(uid).get();
+  return snap.exists ? (snap.data() as UserProfileDoc) : null;
+}
+
+/**
+ * Migrate legacy receptionist docs that use the old singular schema
+ * (`invitedByDoctorId`, `assignedClinicIds`, `inviteStatus`) into the new
+ * multi-doctor schema. Idempotent — safe to run multiple times.
+ */
+export async function runReceptionistMigration(): Promise<number> {
+  const snap = await receptionistsCol().get();
+  let migrated = 0;
+  const nowISO = new Date().toISOString();
+  for (const d of snap.docs) {
+    const raw = d.data() as Record<string, unknown> & UserProfileDoc;
+    const hasLegacy =
+      typeof raw.invitedByDoctorId === "string" ||
+      Array.isArray(raw.assignedClinicIds) ||
+      typeof raw.inviteStatus === "string";
+    if (!hasLegacy) continue;
+    if (raw.doctorInviteStatuses && raw.invitedByDoctorIds) continue; // already new
+
+    const doctorId = raw.invitedByDoctorId as string | undefined;
+    const clinicIds = (raw.assignedClinicIds as string[] | undefined) ?? [];
+    const legacyStatus = raw.inviteStatus as string | undefined;
+
+    if (!doctorId) continue;
+
+    const state: DoctorInviteState = {
+      status:
+        legacyStatus === "joined" ? "active" : "invited",
+      invitedAt: (raw.createdAt as string) ?? nowISO,
+      expiresAt: new Date(
+        (Date.parse((raw.createdAt as string) ?? nowISO) || Date.now()) +
+          INVITE_EXPIRY_MS
+      ).toISOString(),
+      clinicIds,
+      ...(legacyStatus === "joined" ? { acceptedAt: nowISO } : {}),
+    };
+
+    const updates: Partial<UserProfileDoc> & Record<string, unknown> = {
+      invitedByDoctorIds: [doctorId],
+      doctorInviteStatuses: { [doctorId]: state },
+      doctorPermissions: {
+        [doctorId]: defaultReceptionistPermissions(),
+      },
+      mustResetPassword: raw.mustResetPassword ?? false,
+      updatedAt: nowISO,
+      // Clear legacy fields so we don't loop.
+      invitedByDoctorId: admin.firestore.FieldValue.delete() as unknown as undefined,
+      assignedClinicIds: admin.firestore.FieldValue.delete() as unknown as undefined,
+      inviteStatus: admin.firestore.FieldValue.delete() as unknown as undefined,
+    };
+    await d.ref.update(updates as FirebaseFirestore.UpdateData<UserProfileDoc>);
+    migrated++;
+  }
+  return migrated;
+}
+
+/** Auto-run the migration once per server boot so existing data upgrades itself. */
+let receptionistMigrationRan = false;
+export async function ensureReceptionistMigration(): Promise<void> {
+  if (receptionistMigrationRan) return;
+  receptionistMigrationRan = true;
   try {
-    await admin.auth().deleteUser(uid);
+    await runReceptionistMigration();
   } catch {
-    // User might already be deleted
+    receptionistMigrationRan = false;
   }
 }
 
@@ -638,6 +1074,46 @@ export async function notifyMany(
       })
     )
   );
+}
+
+/** Format a doctor's name with a "Dr." prefix unless it already has one. */
+function _withDoctorTitle(name: string | undefined | null): string {
+  const n = (name ?? "").trim();
+  if (!n) return "your doctor";
+  return /^dr\.?\s/i.test(n) ? n : `Dr. ${n}`;
+}
+
+/**
+ * Role-aware notification for a patient + doctor pair. The patient sees the
+ * doctor's name (prefixed with "Dr."); the doctor sees the patient's name.
+ */
+async function notifyAppointmentParties(
+  appt: { patientId: string; doctorId: string; patientName?: string; doctorName?: string },
+  opts: {
+    type: NotificationType;
+    title: string;
+    appointmentId?: string;
+    message: (counterparty: string) => string;
+  }
+) {
+  const doctorDisplay = _withDoctorTitle(appt.doctorName);
+  const patientDisplay = (appt.patientName ?? "").trim() || "the patient";
+  await Promise.all([
+    addNotification({
+      userId: appt.patientId,
+      type: opts.type,
+      title: opts.title,
+      message: opts.message(doctorDisplay),
+      appointmentId: opts.appointmentId,
+    }),
+    addNotification({
+      userId: appt.doctorId,
+      type: opts.type,
+      title: opts.title,
+      message: opts.message(patientDisplay),
+      appointmentId: opts.appointmentId,
+    }),
+  ]);
 }
 
 export async function listNotificationsByUser(
@@ -700,11 +1176,12 @@ export async function runAppointmentMaintenance(): Promise<void> {
       cancelReason: "Auto-cancelled: payment not completed within 1 hour.",
       updatedAt: new Date().toISOString(),
     });
-    await notifyMany([a.patientId, a.doctorId], {
+    await notifyAppointmentParties(a, {
       type: "auto-cancelled",
       title: "Appointment auto-cancelled",
-      message: `Pending appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} was auto-cancelled because payment was not completed within 1 hour.`,
       appointmentId: a.id,
+      message: (counterparty) =>
+        `Pending appointment with ${counterparty} on ${a.date} at ${a.timeSlot} was auto-cancelled because payment was not completed within 1 hour.`,
     });
   }
 
@@ -734,11 +1211,12 @@ export async function runAppointmentMaintenance(): Promise<void> {
       pendingPatientConfirmation: false,
       updatedAt: new Date().toISOString(),
     });
-    await notifyMany([a.patientId, a.doctorId], {
+    await notifyAppointmentParties(a, {
       type: "auto-confirmed",
       title: "Reschedule auto-confirmed",
-      message: `The rescheduled appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} was auto-confirmed.`,
       appointmentId: a.id,
+      message: (counterparty) =>
+        `The rescheduled appointment with ${counterparty} on ${a.date} at ${a.timeSlot} was auto-confirmed.`,
     });
   }
 
@@ -807,13 +1285,151 @@ export async function runAppointmentMaintenance(): Promise<void> {
     }
     await d.ref.update(clean({ ...update, updatedAt: completedAt }));
 
-    await notifyMany([a.patientId, a.doctorId], {
+    await notifyAppointmentParties(a, {
       type: "auto-confirmed",
       title: "Appointment auto-confirmed",
-      message: `Your appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} was auto-confirmed and marked completed.`,
       appointmentId: a.id,
+      message: (counterparty) =>
+        `Your appointment with ${counterparty} on ${a.date} at ${a.timeSlot} was auto-confirmed and marked completed.`,
     });
   }
+}
+
+// ─── Reviews & doctor rating aggregate ────────────────────
+/**
+ * Deterministic review doc ID: one review per (doctor, patient) pair so
+ * upserts always overwrite the previous review instead of creating duplicates.
+ */
+function reviewDocId(doctorId: string, patientId: string): string {
+  return `${doctorId}_${patientId}`;
+}
+
+/**
+ * Propagate the latest patient→doctor rating/feedback to every completed
+ * appointment between that patient and doctor. Enforces the invariant that
+ * each patient has a single, consistent rating per doctor across all visits.
+ */
+export async function propagateRatingToCompletedAppointments(
+  patientId: string,
+  doctorId: string,
+  rating: number,
+  feedback: string
+): Promise<number> {
+  const snap = await appointmentsCol()
+    .where("patientId", "==", patientId)
+    .where("doctorId", "==", doctorId)
+    .where("status", "==", "completed")
+    .get();
+  if (snap.empty) return 0;
+  const nowISO = new Date().toISOString();
+  const batch = firestore.batch();
+  snap.docs.forEach((d) => {
+    batch.update(d.ref, {
+      doctorRating: rating,
+      feedback,
+      updatedAt: nowISO,
+    });
+  });
+  await batch.commit();
+  return snap.size;
+}
+
+/** Returns true if the patient has at least one completed appointment with the doctor. */
+export async function hasCompletedAppointmentBetween(
+  patientId: string,
+  doctorId: string
+): Promise<boolean> {
+  const snap = await appointmentsCol()
+    .where("patientId", "==", patientId)
+    .where("doctorId", "==", doctorId)
+    .where("status", "==", "completed")
+    .limit(1)
+    .get();
+  return !snap.empty;
+}
+
+export async function getReview(
+  doctorId: string,
+  patientId: string
+): Promise<ReviewDoc | null> {
+  const snap = await reviewsCol().doc(reviewDocId(doctorId, patientId)).get();
+  return snap.exists ? (snap.data() as ReviewDoc) : null;
+}
+
+export async function listReviewsByDoctor(doctorId: string): Promise<ReviewDoc[]> {
+  const snap = await reviewsCol().where("doctorId", "==", doctorId).get();
+  const docs = snap.docs.map((d) => d.data() as ReviewDoc);
+  return docs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/**
+ * Upsert a patient's review of a doctor and update the doctor's rating
+ * aggregate in a single transaction. The aggregate stores `ratingSum`,
+ * `ratingCount`, and `ratingAverage` on the doctor profile so that
+ * listing doctors never needs to scan the reviews collection.
+ */
+export async function upsertReview(input: {
+  doctorId: string;
+  patientId: string;
+  patientName: string;
+  rating: number;
+  comment: string;
+}): Promise<{ created: boolean; review: ReviewDoc }> {
+  if (!Number.isFinite(input.rating) || input.rating < 1 || input.rating > 5) {
+    throw new Error("rating must be between 1 and 5");
+  }
+  const id = reviewDocId(input.doctorId, input.patientId);
+  const ref = reviewsCol().doc(id);
+  const doctorRef = doctorsCol().doc(input.doctorId);
+
+  let created = false;
+  let finalReview: ReviewDoc | null = null;
+
+  await firestore.runTransaction(async (tx) => {
+    const [prevSnap, docSnap] = await Promise.all([tx.get(ref), tx.get(doctorRef)]);
+    if (!docSnap.exists) throw new Error("Doctor not found");
+    const doctor = docSnap.data() as UserProfileDoc;
+    if (doctor.role !== USER_ROLES.DOCTOR) throw new Error("Doctor not found");
+
+    const nowISO = new Date().toISOString();
+    const prev = prevSnap.exists ? (prevSnap.data() as ReviewDoc) : null;
+
+    const prevSum = doctor.ratingSum ?? 0;
+    const prevCount = doctor.ratingCount ?? 0;
+    let nextSum: number;
+    let nextCount: number;
+    if (prev) {
+      nextSum = prevSum - prev.rating + input.rating;
+      nextCount = prevCount;
+    } else {
+      nextSum = prevSum + input.rating;
+      nextCount = prevCount + 1;
+      created = true;
+    }
+    const nextAvg = nextCount > 0 ? Math.round((nextSum / nextCount) * 10) / 10 : 0;
+
+    const review: ReviewDoc = {
+      id,
+      doctorId: input.doctorId,
+      patientId: input.patientId,
+      patientName: input.patientName,
+      rating: input.rating,
+      comment: input.comment,
+      createdAt: prev?.createdAt ?? nowISO,
+      updatedAt: nowISO,
+    };
+    finalReview = review;
+
+    tx.set(ref, clean(review));
+    tx.update(doctorRef, {
+      ratingSum: nextSum,
+      ratingCount: nextCount,
+      ratingAverage: nextAvg,
+      updatedAt: nowISO,
+    });
+  });
+
+  return { created, review: finalReview! };
 }
 
 /**
@@ -831,11 +1447,12 @@ export async function cancelAllPendingAppointments(): Promise<number> {
       cancelReason: "Auto-cancelled: pending payment not completed.",
       updatedAt: new Date().toISOString(),
     });
-    await notifyMany([a.patientId, a.doctorId], {
+    await notifyAppointmentParties(a, {
       type: "auto-cancelled",
       title: "Pending appointment cancelled",
-      message: `Your pending appointment with ${a.doctorName} on ${a.date} at ${a.timeSlot} has been cancelled because payment was not completed.`,
       appointmentId: a.id,
+      message: (counterparty) =>
+        `Your pending appointment with ${counterparty} on ${a.date} at ${a.timeSlot} has been cancelled because payment was not completed.`,
     });
     n++;
   }
